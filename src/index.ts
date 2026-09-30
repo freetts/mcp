@@ -34,8 +34,8 @@ mountOAuth(app);
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
 app.get("/icon-:size.png", (req: Request, res: Response) => { if (!["128", "256", "512"].includes(String(req.params.size))) return res.status(404).end(); res.setHeader("Cache-Control", "public, max-age=86400"); res.sendFile(`icon-${req.params.size}.png`, { root: ASSETS }, (err) => { if (err && !res.headersSent) res.status(404).end(); }); });
 
-app.get("/robots.txt", (_q, res) => res.type("text/plain").send("User-agent: *
-Disallow: /
+app.get("/robots.txt", (_q, res) => res.type("text/plain").send("User-agent: *" + "
+" + "Disallow: /" + "
 "));
 app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
