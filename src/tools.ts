@@ -149,7 +149,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       free_only: z.boolean().optional().describe("Only voices that work without a FreeTTS key."),
       limit: z.number().int().min(1).max(200).optional().describe("How many to return. Default 15."),
     },
-    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
   }, async (a) => {
     const all = await voices();
     const want = (a.language || "").toLowerCase().trim();
@@ -185,7 +185,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       use: z.string().optional().describe("What the audio is for, in a few words."),
       gender: z.enum(["female", "male", "any"]).optional(),
     },
-    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
   }, async (a) => {
     const all = await voices();
     const want = a.language.toLowerCase().trim();
@@ -284,7 +284,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     title: "Check FreeTTS usage and plan",
     description: "Show the FreeTTS plan behind this connection and what is left: characters today or this month, requests a minute, HD voices, watermark. Use it when the user asks about limits, their plan, or why a request was refused.",
     inputSchema: {},
-    annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
   }, async () => {
     if (caller.kind === "anon") {
       const a = CONFIG.anon; const day = dayUsed(caller);
@@ -416,7 +416,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       audio_url: z.string().url().describe("Public https URL of the audio file."),
       language: z.string().optional().describe("Language of the recording, like 'en-US', 'de-DE', 'Arabic' or 'es', or 'auto' to detect it (default)."),
     },
-    annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
     if (caller.plan === "free") return fail(`Speech to text is part of FreeTTS PRO. Plans: ${PRICING}`);

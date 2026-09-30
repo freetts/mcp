@@ -23,7 +23,7 @@
     "url": "https://github.com/freetts/mcp",
     "source": "github"
   },
-  "version": "1.0.5",
+  "version": "1.0.6",
   "websiteUrl": "https://freetts.org/developers/mcp",
   "remotes": [
     {
@@ -35,7 +35,7 @@
     {
       "registryType": "npm",
       "identifier": "@freetts/mcp",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "transport": {
         "type": "stdio"
       },
