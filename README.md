@@ -3,7 +3,7 @@
 Text to speech inside Claude, ChatGPT, Cursor, VS Code, Codex, Windsurf, Gemini CLI and any other MCP client. One remote server, nothing to install:
 
 ```
-https://freetts.org/mcp
+https://mcp.freetts.org/mcp
 ```
 
 Ask your assistant to read something aloud, and it calls FreeTTS and hands you an MP3 link.
@@ -28,35 +28,35 @@ Ask your assistant to read something aloud, and it calls FreeTTS and hands you a
 
 **Claude Code**
 ```
-claude mcp add --transport http freetts https://freetts.org/mcp
+claude mcp add --transport http freetts https://mcp.freetts.org/mcp
 ```
 With a key: add `--header "Authorization: Bearer ft_live_..."`, or run `/mcp` inside a session to connect with the sign-in flow.
 
-**Claude (web, desktop, mobile):** Settings, Connectors, Add custom connector, paste `https://freetts.org/mcp`. Free tools work at once; when a tool needs your account Claude shows Connect.
+**Claude (web, desktop, mobile):** Settings, Connectors, Add custom connector, paste `https://mcp.freetts.org/mcp`. Free tools work at once; when a tool needs your account Claude shows Connect.
 
 **Cursor:** [Install in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=freetts&config=eyJ1cmwiOiJodHRwczovL2ZyZWV0dHMub3JnL21jcCJ9), or in `~/.cursor/mcp.json`:
 ```json
-{ "mcpServers": { "freetts": { "url": "https://freetts.org/mcp" } } }
+{ "mcpServers": { "freetts": { "url": "https://mcp.freetts.org/mcp" } } }
 ```
 
 **VS Code:** [Install in VS Code](https://vscode.dev/redirect/mcp/install?name=freetts&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Ffreetts.org%2Fmcp%22%7D), or in `.vscode/mcp.json`:
 ```json
-{ "servers": { "freetts": { "type": "http", "url": "https://freetts.org/mcp" } } }
+{ "servers": { "freetts": { "type": "http", "url": "https://mcp.freetts.org/mcp" } } }
 ```
 
 **Codex CLI and ChatGPT desktop**
 ```
-codex mcp add freetts --url https://freetts.org/mcp
+codex mcp add freetts --url https://mcp.freetts.org/mcp
 ```
 
-**ChatGPT (web):** Settings, Apps (Developer Mode), add `https://freetts.org/mcp`.
+**ChatGPT (web):** Settings, Apps (Developer Mode), add `https://mcp.freetts.org/mcp`.
 
 **Windsurf**, `~/.codeium/windsurf/mcp_config.json`:
 ```json
-{ "mcpServers": { "freetts": { "serverUrl": "https://freetts.org/mcp" } } }
+{ "mcpServers": { "freetts": { "serverUrl": "https://mcp.freetts.org/mcp" } } }
 ```
 
-**Any other client:** use `https://freetts.org/mcp` as the server URL (Streamable HTTP). To use your account without the sign-in flow, send your key as `Authorization: Bearer ft_live_...` or `x-api-key: ft_live_...`.
+**Any other client:** use `https://mcp.freetts.org/mcp` as the server URL (Streamable HTTP). To use your account without the sign-in flow, send your key as `Authorization: Bearer ft_live_...` or `x-api-key: ft_live_...`.
 
 Full guide with copy buttons: [freetts.org/developers/mcp](https://freetts.org/developers/mcp).
 

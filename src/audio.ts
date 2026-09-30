@@ -1,5 +1,5 @@
 // Free audio for callers without an account: the spoken FreeTTS watermark is
-// added, the file is kept on freetts.org/mcp-audio for one hour, then removed.
+// added, the file is kept under mcp.freetts.org/audio/ for one hour, then removed.
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,7 +31,7 @@ export async function watermarkAndStore(mp3: Buffer): Promise<string> {
 }
 
 export const storedPath = (id: string) => (/^[0-9a-f-]{36}$/.test(id) ? join(AUDIO_DIR, `${id}.mp3`) : null);
-export const publicAudioUrl = (id: string) => `${CONFIG.publicUrl}/mcp-audio/${id}.mp3`;
+export const publicAudioUrl = (id: string) => `${CONFIG.publicUrl}/audio/${id}.mp3`;
 
 /** Seconds of an MP3, from ffprobe-free arithmetic: ffmpeg prints it; cheaper to read the header via ffmpeg -f null. */
 export async function durationSeconds(path: string): Promise<number | null> {

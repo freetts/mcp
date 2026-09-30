@@ -29,10 +29,10 @@ app.options("/{*path}", (_q, res) => res.sendStatus(204));
 
 mountOAuth(app);
 
-app.get("/mcp/health", (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
+app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
 // Free-tier audio, one hour
-app.get("/mcp-audio/:file", (req: Request, res: Response) => {
+app.get("/audio/:file", (req: Request, res: Response) => {
   const p = storedPath(String(req.params.file).replace(/\.mp3$/, ""));
   if (!p) return res.status(404).end();
   res.setHeader("Cache-Control", "private, max-age=3600");
@@ -108,7 +108,11 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
   res.on("close", () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
 }
 
-app.all(MCP_PATH, (req, res) => { handleMcp(req, res).catch((e) => { console.error("mcp", e); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null }); }); });
+// A person opening the address in a browser gets the documentation.
+app.get("/", (_q, res) => res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`));
+app.all(MCP_PATH, (req, res) => {
+  if (req.method === "GET" && req.accepts(["text/event-stream", "text/html"]) === "text/html") return res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`);
+ handleMcp(req, res).catch((e) => { console.error("mcp", e); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null }); }); });
 
 app.use((err: Error, _q: Request, res: Response, _n: NextFunction) => { console.error(err); if (!res.headersSent) res.status(500).json({ error: "server_error" }); });
 
