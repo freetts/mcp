@@ -92,6 +92,12 @@ const callsProtected = (body: unknown): string | null => {
 };
 
 async function handleMcp(req: Request, res: Response): Promise<void> {
+  // This server always answers in plain JSON, so a client that only accepts JSON (or says nothing),
+  // like OpenAI's plugin checker, is served instead of refused with 406.
+  if (req.method === "POST") {
+    const acc = String(req.headers.accept || "");
+    if (!/text\/event-stream/.test(acc) || !/application\/json|\*\/\*/.test(acc)) req.headers.accept = "application/json, text/event-stream";
+  }
   if (overLimit("mcp", clientIp(req), platformOf(clientIp(req)) ? 6000 : 180, 60_000)) { res.status(429).set("Retry-After", "60").json({ jsonrpc: "2.0", error: { code: -32000, message: "Too many requests from this address. Wait a minute." }, id: null }); return; }
   const { caller, badToken } = await resolveCaller(req);
   let protectedTool = req.method === "POST" ? callsProtected(req.body) : null;
