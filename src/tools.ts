@@ -30,6 +30,9 @@ const fail = (t: string): CallToolResult => ({ content: [{ type: "text", text: t
 const DASH = `${CONFIG.siteUrl}/dashboard`;
 const PRICING = `${CONFIG.siteUrl}/pricing`;
 const KEYS_HELP = `Get a key: ${DASH} (API keys). A free account has one key with 5,000 characters a day; PRO has HD voices, no watermark and 1,000,000 characters a month (${PRICING}).`;
+/** ChatGPT's plugin rules: no plan lists or upgrade nudges; a plain reason and an informational plans link only. */
+export const inChatGPT = (c: Caller) => c.platform === "chatgpt" || /openai-mcp/i.test(c.userAgent);
+const keysHelp = (c: Caller) => inChatGPT(c) ? `What each FreeTTS plan includes: ${PRICING}` : KEYS_HELP;
 
 // Refusals that a plan changes; only these get a pointer to the plans.
 const PLAN_LIMITS = new Set(["daily", "monthly", "monthly_chars", "per_gen", "pro_feature", "creator_required", "trial_cap", "trial_velocity", "trial_ended"]);
@@ -43,7 +46,7 @@ function apiErrorText(e: unknown, caller: Caller): string {
     const lt = typeof d === "object" && d ? d.limit_type || "" : "";
     if (e.status === 429) return `FreeTTS is rate limiting this ${caller.kind === "anon" ? "connection" : "key"} (too many requests in a minute). Wait a moment and try again.`;
     // Callers without a key share the service account: its caps are the free pool, not theirs.
-    if (caller.kind === "anon" && (e.status === 402 || PLAN_LIMITS.has(lt))) return `The free allowance for callers without an account is used up for now. A free FreeTTS key keeps working: ${KEYS_HELP}`;
+    if (caller.kind === "anon" && (e.status === 402 || PLAN_LIMITS.has(lt))) return `The free allowance for callers without an account is used up for now. A free FreeTTS key keeps working: ${keysHelp(caller)}`;
     if (lt === "hd_voice_required") return `HD and Signature voices are part of FreeTTS PRO. list_voices with free_only: true shows the voices this key can use. Plans: ${PRICING}`;
     if (e.status === 402 || PLAN_LIMITS.has(lt)) return `${msg} Plans: ${PRICING}`;
     if (e.status === 401) return `FreeTTS did not accept the API key. Check it in ${DASH} (API keys), or connect again.`;
@@ -78,24 +81,24 @@ export const platformSpent = (caller: Caller) => !!caller.platform && caller.kin
 
 function anonCheck(caller: Caller, chars: number): string | null {
   const a = CONFIG.anon;
-  if (chars > a.perCallChars) return `Without a FreeTTS key, one call can read up to ${a.perCallChars.toLocaleString()} characters; this text is ${chars.toLocaleString()}. Split it, or add a key. ${KEYS_HELP}`;
+  if (chars > a.perCallChars) return `Without a FreeTTS key, one call can read up to ${a.perCallChars.toLocaleString()} characters; this text is ${chars.toLocaleString()}. Split it, or add a key. ${keysHelp(caller)}`;
   const s = store.get();
   const m = (s.anon[meterKey(caller)] ||= { calls: [], chars: [] });
   const now = Date.now();
   const perMinute = caller.platform ? a.platformPerMinute : a.perMinute;
   m.calls = m.calls.filter((t) => t > now - 60_000);
-  if (m.calls.length >= perMinute) return `Without a key, this connection can make ${perMinute} requests a minute. Wait a moment, or add a key. ${KEYS_HELP}`;
+  if (m.calls.length >= perMinute) return `Without a key, this connection can make ${perMinute} requests a minute. Wait a moment, or add a key. ${keysHelp(caller)}`;
   m.chars = m.chars.filter(([t]) => t > now - 86_400_000);
   const day = m.chars.reduce((x, [, c]) => x + c, 0);
   if (caller.platform) {
     if (day + chars > a.platformDailyChars) return `Free audio without an account is used up for today on ${PLATFORM_NAME[caller.platform]}. Connect your free FreeTTS account to keep going with 5,000 characters a day of your own: ${DASH} (API keys).`;
   } else {
     const hour = m.chars.filter(([t]) => t > now - 3_600_000).reduce((x, [, c]) => x + c, 0);
-    if (day + chars > a.dailyChars) return `Without a key, FreeTTS reads ${a.dailyChars.toLocaleString()} characters a day per connection; ${day.toLocaleString()} are used. ${KEYS_HELP}`;
-    if (hour + chars > a.hourlyChars) return `Without a key, FreeTTS reads ${a.hourlyChars.toLocaleString()} characters an hour per connection. Try again later, or add a key. ${KEYS_HELP}`;
+    if (day + chars > a.dailyChars) return `Without a key, FreeTTS reads ${a.dailyChars.toLocaleString()} characters a day per connection; ${day.toLocaleString()} are used. ${keysHelp(caller)}`;
+    if (hour + chars > a.hourlyChars) return `Without a key, FreeTTS reads ${a.hourlyChars.toLocaleString()} characters an hour per connection. Try again later, or add a key. ${keysHelp(caller)}`;
   }
   const pool = s.pool[today()] || 0;
-  if (pool + chars > a.poolDailyChars) return `The free pool for callers without an account is used up for today. A free FreeTTS key keeps working: ${KEYS_HELP}`;
+  if (pool + chars > a.poolDailyChars) return `The free pool for callers without an account is used up for today. A free FreeTTS key keeps working: ${keysHelp(caller)}`;
   return null;
 }
 /** Counted before the synthesis starts, so parallel calls cannot pass the limits together; handed back if it fails. */
@@ -201,7 +204,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     if (free[0]) picks.push([free[0], `free, ${(free[0].VoiceTag?.VoicePersonalities || ["clear"]).slice(0, 2).join(" and ").toLowerCase()}`]);
     if (free[1]) picks.push([free[1], `free, a ${free[1].Gender.toLowerCase()} alternative`]);
     if (pro[0]) picks.push([pro[0], `${tierLabel(pro[0])} quality, needs a FreeTTS PRO key`]);
-    return text(picks.map(([v, why], i) => `${i + 1}. ${v.ShortName} (${v.FriendlyName || ""}, ${v.Gender}, ${langOf(v)}): ${why}.`).join("\n") + `\n\nPass the id to text_to_speech as voice.${caller.kind === "anon" ? " Without a key the free voices work; " + KEYS_HELP : ""}`);
+    return text(picks.map(([v, why], i) => `${i + 1}. ${v.ShortName} (${v.FriendlyName || ""}, ${v.Gender}, ${langOf(v)}): ${why}.`).join("\n") + `\n\nPass the id to text_to_speech as voice.${caller.kind === "anon" && !inChatGPT(caller) ? " Without a key the free voices work; " + KEYS_HELP : ""}`);
   });
 
   // ── text_to_speech ────────────────────────────────────────────────────
@@ -234,12 +237,12 @@ export function registerTools(server: McpServer, caller: Caller): void {
       v = d; voice = d.ShortName;
     } else if (isAnon && !isFreeVoice(v)) {
       const alt = await pickDefaultVoice(v.Locale, true);
-      if (!alt) return fail(`${v.ShortName} needs a FreeTTS PRO key and there is no free voice for ${langOf(v)}. ${KEYS_HELP}`);
-      note = `${v.ShortName} is a ${tierLabel(v)} voice, which needs a FreeTTS PRO key. This audio uses the closest free voice instead, ${alt.ShortName}. ${KEYS_HELP}\n`;
+      if (!alt) return fail(`${v.ShortName} needs a FreeTTS PRO key and there is no free voice for ${langOf(v)}. ${keysHelp(caller)}`);
+      note = `${v.ShortName} is a ${tierLabel(v)} voice, which needs a FreeTTS PRO key. This audio uses the closest free voice instead, ${alt.ShortName}. ${keysHelp(caller)}\n`;
       v = alt; voice = alt.ShortName;
     }
     const fmt = a.format || "mp3";
-    if (isAnon && fmt === "wav") return fail(`WAV is part of FreeTTS PRO. Without a key the audio is MP3. ${KEYS_HELP}`);
+    if (isAnon && fmt === "wav") return fail(`WAV is part of FreeTTS PRO. Without a key the audio is MP3. ${keysHelp(caller)}`);
     if (fmt === "wav" && caller.plan === "free") return fail(`WAV is part of FreeTTS PRO; a free key gets MP3. Plans: ${PRICING}`);
     const rate = a.speed ? `${a.speed > 0 ? "+" : ""}${a.speed}%` : undefined;
     const hk = requestHash([caller.kind, caller.kind === "key" ? caller.apiKey! : meterKey(caller), a.text, voice, fmt, rate || ""]);
@@ -249,7 +252,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     if (isAnon) {
       const why = anonCheck(caller, chars);
       if (why) return fail(why);
-      if (!CONFIG.serviceApiKey) return fail(CONFIG.local ? `This local FreeTTS server needs your FreeTTS API key to make audio: set FREETTS_API_KEY (a free key works). ${KEYS_HELP} Or use the hosted server https://mcp.freetts.org/mcp, which works without a key.` : `Calls without a key are not set up on this server yet. ${KEYS_HELP}`);
+      if (!CONFIG.serviceApiKey) return fail(CONFIG.local ? `This local FreeTTS server needs your FreeTTS API key to make audio: set FREETTS_API_KEY (a free key works). ${keysHelp(caller)} Or use the hosted server https://mcp.freetts.org/mcp, which works without a key.` : `Calls without a key are not set up on this server yet. ${keysHelp(caller)}`);
       refund = anonReserve(caller, chars);
     }
     try {
@@ -265,7 +268,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       } else if (caller.plan === "free") kept = "1 hour";
       const dur = localId ? await durationSeconds(storedPath(localId)!) : null;
       const content: CallToolResult["content"] = [
-        { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it." : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
+        { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
         { type: "resource_link", uri: url, name: `freetts-${(r.voice || voice).replace(/[^A-Za-z0-9]+/g, "-")}.${fmt}`, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
       ];
       if (a.include_audio) {
@@ -288,8 +291,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
   }, async () => {
     if (caller.kind === "anon") {
       const a = CONFIG.anon; const day = dayUsed(caller);
-      if (caller.platform) return text(`No FreeTTS account is connected. Guests on ${PLATFORM_NAME[caller.platform]} share a free allowance: standard voices, ${a.perCallChars.toLocaleString()} characters a call, a short spoken FreeTTS tag at the end, files kept 1 hour. Connecting your free FreeTTS account gives you 5,000 characters a day of your own. ${KEYS_HELP}`);
-      return text(`No FreeTTS key on this connection. Free without a key: standard voices, ${a.perCallChars.toLocaleString()} characters a call, ${a.dailyChars.toLocaleString()} a day (${day.toLocaleString()} used), ${a.perMinute} requests a minute, a short spoken FreeTTS tag at the end, files kept 1 hour. ${KEYS_HELP}`);
+      if (caller.platform) return text(`No FreeTTS account is connected. Guests on ${PLATFORM_NAME[caller.platform]} share a free allowance: standard voices, ${a.perCallChars.toLocaleString()} characters a call, a short spoken FreeTTS tag at the end, files kept 1 hour. Connecting your free FreeTTS account gives you 5,000 characters a day of your own. ${keysHelp(caller)}`);
+      return text(`No FreeTTS key on this connection. Free without a key: standard voices, ${a.perCallChars.toLocaleString()} characters a call, ${a.dailyChars.toLocaleString()} a day (${day.toLocaleString()} used), ${a.perMinute} requests a minute, a short spoken FreeTTS tag at the end, files kept 1 hour. ${keysHelp(caller)}`);
     }
     try {
       const u = await usage(caller.apiKey!);
@@ -316,7 +319,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (a) => {
-    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
+    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Dialogue with several voices is part of FreeTTS PRO. The free plan can make single-voice audio with text_to_speech. Plans: ${PRICING}`);
     const lines = a.script.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const parsed = lines.map((l) => { const m = /^([^:]{1,40}):\s*(.+)$/.exec(l); return m ? { who: m[1].trim(), text: m[2].trim() } : null; });
@@ -381,7 +384,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (a) => {
-    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
+    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Script mode recording is part of FreeTTS PRO. The free plan can paste a script and see its timing on freetts.org/studio?mode=script; recording needs PRO: ${PRICING}`);
     try {
       const rec = await recordScript(caller.apiKey!, a.script, {
@@ -418,7 +421,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
   }, async (a) => {
-    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
+    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Speech to text is part of FreeTTS PRO. Plans: ${PRICING}`);
     try {
       const { buf, mime, url } = await safeFetch(a.audio_url, 60_000_000);
