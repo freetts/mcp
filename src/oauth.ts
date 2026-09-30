@@ -102,6 +102,8 @@ button{margin-top:16px;width:100%;font:inherit;font-weight:700;padding:13px;bord
 .k{font-family:ui-monospace,Menlo,monospace;font-size:.92em}.err{color:#fca5a5}.brand{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:14px}.dot{width:10px;height:10px;border-radius:50%;background:#10b981}</style></head><body><main><div class="brand"><span class="dot"></span>FreeTTS</div>${body}</main></body></html>`;
 
 export function mountOAuth(app: Express): void {
+  // The connect page takes a key: no other site may frame it.
+  app.use("/oauth", (_q, res, next) => { res.setHeader("X-Frame-Options", "DENY"); res.setHeader("Content-Security-Policy", "frame-ancestors 'none'"); res.setHeader("Referrer-Policy", "no-referrer"); res.setHeader("Cache-Control", "no-store"); next(); });
   app.get("/.well-known/oauth-protected-resource", (_q, res) => res.json(protectedResourceMetadata()));
   app.get(`/.well-known/oauth-protected-resource${MCP_PATH}`, (_q, res) => res.json(protectedResourceMetadata()));
   app.get("/.well-known/oauth-authorization-server", (_q, res) => res.json(authorizationServerMetadata()));

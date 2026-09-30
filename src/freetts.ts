@@ -38,10 +38,50 @@ let voiceCache: { at: number; list: Voice[] } | null = null;
 export async function voices(): Promise<Voice[]> {
   if (voiceCache && Date.now() - voiceCache.at < 600_000) return voiceCache.list;
   const list = await call<Voice[]>("/api/voices", { timeoutMs: 30_000 });
+  // Most rows carry only the locale code; lend them the name their locale has elsewhere in the list.
+  const names = new Map<string, string>();
+  for (const v of list) if (v.LocaleName && !names.has(v.Locale)) names.set(v.Locale, v.LocaleName);
+  for (const v of list) if (!v.LocaleName && names.has(v.Locale)) v.LocaleName = names.get(v.Locale);
   voiceCache = { at: Date.now(), list };
   return list;
 }
-export const isFreeVoice = (v: Voice) => v.RequiresPro === false;
+
+/** Voices for a language as people and models write it: 'en-US', 'en', 'German', 'English (US)', 'Portuguese (Brazil)'.
+ *  A full locale matches only that locale; a bare language takes all its regions. */
+export function byLanguage(list: Voice[], language: string | undefined): Voice[] {
+  let w = (language || "").toLowerCase().trim().replace(/_/g, "-");
+  if (!w) return list;
+  const aliases: [RegExp, string][] = [[/\(us\)|\(usa\)|\(america\)/, "(united states)"], [/\(uk\)|\(gb\)|\(britain\)|\(england\)/, "(united kingdom)"], [/^american( english)?$/, "english (united states)"], [/^british( english)?$/, "english (united kingdom)"], [/^mandarin$/, "chinese (mandarin"], [/^brazilian( portuguese)?$/, "portuguese (brazil)"], [/^mexican( spanish)?$/, "spanish (mexico)"]];
+  for (const [a, b] of aliases) w = w.replace(a, b);
+  const code = (v: Voice) => v.Locale.toLowerCase();
+  const name = (v: Voice) => (v.LocaleName || "").toLowerCase();
+  const tries: Array<(v: Voice) => boolean> = [
+    (v) => code(v) === w,
+    (v) => /^[a-z]{2,3}$/.test(w) && code(v).split("-")[0] === w,
+    (v) => name(v) === w,
+    (v) => name(v).startsWith(w),
+    (v) => name(v).includes(w),
+    (v) => { const base = w.replace(/\s*\(.*$/, "").trim(); return !!base && base !== w && name(v).startsWith(base + " ("); },
+  ];
+  for (const t of tries) { const hit = list.filter(t); if (hit.length) return hit; }
+  return [];
+}
+
+/** A voice by its id ('en-US-JennyNeural', any case) or by the short name people use ('Jenny', 'Andrew').
+ *  A short name shared by several voices prefers a free one in the asked language, then en-US. */
+export function findVoice(list: Voice[], asked: string, language?: string): Voice | undefined {
+  const a = asked.trim().toLowerCase();
+  const exact = list.find((v) => v.ShortName.toLowerCase() === a);
+  if (exact) return exact;
+  if (!/^[a-z][a-z .'-]{1,40}$/.test(a)) return undefined;
+  const short = (v: Voice) => v.ShortName.split("-").slice(2).join("-").replace(/Neural$/, "").toLowerCase();
+  const hits = list.filter((v) => short(v) === a.replace(/\s+/g, "") && (v.Tier || "") !== "ultra");
+  if (!hits.length) return undefined;
+  const inLang = language ? byLanguage(hits, language) : [];
+  const rank = (v: Voice) => (inLang.includes(v) ? 0 : 2) + (v.Locale === "en-US" ? 0 : 1) + (isFreeVoice(v) ? 0 : 0.5);
+  return [...hits].sort((x, y) => rank(x) - rank(y))[0];
+}
+export function isFreeVoice(v: Voice): boolean { return v.RequiresPro === false; }
 export const tierLabel = (v: Voice) => {
   const t = (v.Tier || "").toLowerCase();
   if (t === "signature") return "Signature";

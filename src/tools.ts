@@ -4,7 +4,8 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CONFIG } from "./config.js";
-import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, type Voice } from "./freetts.js";
+import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, byLanguage, findVoice, type Voice } from "./freetts.js";
+import { safeFetch, FetchRefused, audioFileName } from "./safefetch.js";
 import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash } from "./audio.js";
 import { store, today } from "./store.js";
 import { recordScript, steadyVoiceId } from "./script/record.js";
@@ -28,16 +29,26 @@ const DASH = `${CONFIG.siteUrl}/dashboard`;
 const PRICING = `${CONFIG.siteUrl}/pricing`;
 const KEYS_HELP = `Get a key: ${DASH} (API keys). A free account has one key with 5,000 characters a day; PRO has HD voices, no watermark and 1,000,000 characters a month (${PRICING}).`;
 
+// Refusals that a plan changes; only these get a pointer to the plans.
+const PLAN_LIMITS = new Set(["daily", "monthly", "monthly_chars", "per_gen", "pro_feature", "creator_required", "trial_cap", "trial_velocity", "trial_ended"]);
+
 function apiErrorText(e: unknown, caller: Caller): string {
   if (e instanceof ApiError) {
     const d = e.detail as { error?: string; limit_type?: string } | string;
-    const msg = typeof d === "string" ? d : d?.error || e.message;
+    // FastAPI's own validation errors arrive as a list of {loc, msg}.
+    const list = Array.isArray(e.detail) ? (e.detail as Array<{ loc?: unknown[]; msg?: string }>).map((x) => `${(x.loc || []).slice(-1)[0] ?? "input"}: ${x.msg}`).join("; ") : "";
+    const msg = list ? `FreeTTS did not accept the request (${list}).` : typeof d === "string" ? d : d?.error || e.message;
+    const lt = typeof d === "object" && d ? d.limit_type || "" : "";
     if (e.status === 429) return `FreeTTS is rate limiting this ${caller.kind === "anon" ? "connection" : "key"} (too many requests in a minute). Wait a moment and try again.`;
-    if (e.status === 402 || (typeof d === "object" && d?.limit_type)) return `${msg} ${caller.kind === "anon" ? KEYS_HELP : `Plans: ${PRICING}`}`;
-    if (e.status === 401) return caller.kind === "key" && /sign in/i.test(String(msg)) ? `This account tool is not switched on for API keys on freetts.org yet. text_to_speech works with your key today; the dialogue, Script mode and transcription tools follow in the next site update.` : `FreeTTS did not accept the API key. Check it in ${DASH} (API keys), or connect again.`;
-    if (e.status === 422 || e.status === 400) return String(msg);
-    return `FreeTTS could not make the audio (${e.status}). ${msg}`;
+    // Callers without a key share the service account: its caps are the free pool, not theirs.
+    if (caller.kind === "anon" && (e.status === 402 || PLAN_LIMITS.has(lt))) return `The free allowance for callers without an account is used up for now. A free FreeTTS key keeps working: ${KEYS_HELP}`;
+    if (lt === "hd_voice_required") return `HD and Signature voices are part of FreeTTS PRO. list_voices with free_only: true shows the voices this key can use. Plans: ${PRICING}`;
+    if (e.status === 402 || PLAN_LIMITS.has(lt)) return `${msg} Plans: ${PRICING}`;
+    if (e.status === 401) return `FreeTTS did not accept the API key. Check it in ${DASH} (API keys), or connect again.`;
+    if (e.status === 422 || e.status === 400 || lt) return String(msg);
+    return `FreeTTS could not finish this (${e.status}). ${msg}`;
   }
+  if (e instanceof FetchRefused) return e.message;
   return `Something failed on the FreeTTS side: ${(e as Error)?.message || e}. Try again.`;
 }
 
@@ -59,12 +70,21 @@ function anonCheck(caller: Caller, chars: number): string | null {
   if (pool + chars > a.poolDailyChars) return `The free pool for callers without an account is used up for today. A free FreeTTS key keeps working: ${KEYS_HELP}`;
   return null;
 }
-function anonCharge(caller: Caller, chars: number): void {
+/** Counted before the synthesis starts, so parallel calls cannot pass the limits together; handed back if it fails. */
+function anonReserve(caller: Caller, chars: number): () => void {
   const s = store.get();
   const m = (s.anon[caller.ip] ||= { calls: [], chars: [] });
-  m.calls.push(Date.now()); m.chars.push([Date.now(), chars]);
-  s.pool[today()] = (s.pool[today()] || 0) + chars;
+  const at = Date.now(); const day = today();
+  const call = at; const entry: [number, number] = [at, chars];
+  m.calls.push(call); m.chars.push(entry);
+  s.pool[day] = (s.pool[day] || 0) + chars;
   store.touch();
+  return () => {
+    const i = m.calls.indexOf(call); if (i >= 0) m.calls.splice(i, 1);
+    const j = m.chars.indexOf(entry); if (j >= 0) m.chars.splice(j, 1);
+    s.pool[day] = Math.max(0, (s.pool[day] || 0) - chars);
+    store.touch();
+  };
 }
 
 // Same text, same voice, within a few minutes: the same file, no new synthesis.
@@ -74,14 +94,20 @@ setInterval(() => { const cut = Date.now() - 600_000; for (const [k, v] of recen
 const langOf = (v: Voice) => v.LocaleName || v.Locale;
 const voiceLine = (v: Voice) => `${v.ShortName} (${v.FriendlyName || v.ShortName.split("-").slice(2).join("-").replace(/Neural$/, "")}, ${v.Gender}, ${langOf(v)}, ${tierLabel(v)}${isFreeVoice(v) ? ", free" : ", PRO"})`;
 
+// The voice a language gets when none is named: the usual one for its main region.
+const PREFERRED = ["en-US-JennyNeural", "en-US-AndrewNeural", "en-US-AriaNeural", "en-GB-SoniaNeural", "en-AU-NatashaNeural", "en-IN-NeerjaNeural", "de-DE-KatjaNeural", "fr-FR-DeniseNeural", "fr-CA-SylvieNeural", "es-ES-ElviraNeural", "es-MX-DaliaNeural", "pt-BR-FranciscaNeural", "pt-PT-RaquelNeural", "it-IT-ElsaNeural", "ja-JP-NanamiNeural", "ko-KR-SunHiNeural", "ar-SA-ZariyahNeural", "ar-EG-SalmaNeural", "hi-IN-SwaraNeural", "zh-CN-XiaoxiaoNeural", "nl-NL-ColetteNeural", "tr-TR-EmelNeural", "ru-RU-SvetlanaNeural", "pl-PL-ZofiaNeural"];
+
 async function pickDefaultVoice(language: string | undefined, free: boolean): Promise<Voice | null> {
-  const all = await voices();
-  const want = (language || "en").toLowerCase();
-  const pool = all.filter((v) => (free ? isFreeVoice(v) : true) && (v.Locale.toLowerCase() === want || v.Locale.toLowerCase().startsWith(want.split("-")[0] + "-") || (v.LocaleName || "").toLowerCase().includes(want)));
+  const all = (await voices()).filter((v) => (v.Tier || "") !== "ultra" && (free ? isFreeVoice(v) : true));
+  const pool = byLanguage(all, language || "en-US");
   if (!pool.length) return null;
-  const pref = ["en-US-JennyNeural", "en-US-AndrewNeural", "en-US-AriaNeural", "en-GB-SoniaNeural", "de-DE-KatjaNeural", "fr-FR-DeniseNeural", "es-ES-ElviraNeural", "es-MX-DaliaNeural", "pt-BR-FranciscaNeural", "it-IT-ElsaNeural", "ja-JP-NanamiNeural", "ar-EG-SalmaNeural", "hi-IN-SwaraNeural", "zh-CN-XiaoxiaoNeural"];
-  return pool.find((v) => pref.includes(v.ShortName)) || pool.find((v) => v.Locale.toLowerCase() === want) || pool[0];
+  return PREFERRED.map((id) => pool.find((v) => v.ShortName === id)).find(Boolean) || pool.find((v) => v.Locale.split("-")[1]?.toLowerCase() === v.Locale.split("-")[0]) || pool[0];
 }
+
+// Speakers in a dialogue get a voice that matches the name when the name is a common one.
+const FEMALE = new Set("anna maya sara sarah emma olivia sophia sophie mia amelia ava isabella grace lily chloe zoe emily hannah laura julia maria fatima aisha amira layla leila noor lina yasmin mariam salma huda rania dana nadia sofia lucia elena ana ines camille chloé lea léa marie claire nina eva ella ruth rachel rebecca leah esther miriam naomi priya ananya aarti kavya mei yuki sakura hana jenny aria kate katie lisa linda susan karen nancy betty helen mary jane alice rose lucy amy anne".split(" "));
+const MALE = new Set("omar ben james john michael david daniel adam noah liam oliver william thomas jack harry george charlie ethan lucas mateo leo max paul peter mark luke matthew andrew josh joshua ryan tom sam samuel ahmed ali hassan hussein khalid youssef yusuf ibrahim mohammed muhammad mahmoud tariq karim abd rami ziad ziyad fadi nabil sami jose juan carlos luis diego pierre louis hugo jean marco luca giovanni hans lukas felix raj arjun rahul vikram kenji hiro takeshi guy brian eric kevin chris steve tony frank henry jake alex".split(" "));
+const genderFor = (name: string): "female" | "male" | null => { const n = name.toLowerCase().split(/\s+/)[0]; return FEMALE.has(n) ? "female" : MALE.has(n) ? "male" : null; };
 
 export function registerTools(server: McpServer, caller: Caller): void {
   // ── list_voices ───────────────────────────────────────────────────────
@@ -101,14 +127,14 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const want = (a.language || "").toLowerCase().trim();
     const q = (a.search || "").toLowerCase().trim();
     let list = all.filter((v) => (v.Tier || "") !== "ultra");
-    if (want) list = list.filter((v) => v.Locale.toLowerCase() === want || v.Locale.toLowerCase().startsWith(want.split("-")[0] + "-") || (v.LocaleName || "").toLowerCase().includes(want));
+    if (want) list = byLanguage(list, want);
     if (q) list = list.filter((v) => `${v.ShortName} ${v.FriendlyName || ""} ${(v.VoiceTag?.VoicePersonalities || []).join(" ")} ${(v.VoiceTag?.ContentCategories || []).join(" ")}`.toLowerCase().includes(q));
     if (a.gender && a.gender !== "any") list = list.filter((v) => v.Gender.toLowerCase() === a.gender);
     if (a.free_only) list = list.filter(isFreeVoice);
     if (!want && !q) {
       const langs = new Map<string, number>();
       for (const v of list) langs.set(v.LocaleName || v.Locale, (langs.get(v.LocaleName || v.Locale) || 0) + 1);
-      return text(`FreeTTS has ${list.length.toLocaleString()} voices in ${langs.size} languages. Give a language to see its voices. Free without a key: ${list.filter(isFreeVoice).length} standard voices; HD and Signature voices need a FreeTTS PRO key.\n\n` + [...langs.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([l, n]) => `${l}: ${n}`).join("\n"));
+      return text(`FreeTTS has ${list.length.toLocaleString()} voices in ${langs.size} languages and regional variants. Give a language to see its voices. Free without a key: ${list.filter(isFreeVoice).length} standard voices; HD and Signature voices need a FreeTTS PRO key.\n\n` + [...langs.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([l, n]) => `${l}: ${n}`).join("\n"));
     }
     // free first, then standard, then HD, then Signature; friendly names
     const order = (v: Voice) => (isFreeVoice(v) ? 0 : tierLabel(v) === "Standard" ? 1 : tierLabel(v) === "HD" ? 2 : 3);
@@ -135,9 +161,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
   }, async (a) => {
     const all = await voices();
     const want = a.language.toLowerCase().trim();
-    let pool = all.filter((v) => (v.Tier || "") !== "ultra" && (v.Locale.toLowerCase() === want || v.Locale.toLowerCase().startsWith(want.split("-")[0] + "-") || (v.LocaleName || "").toLowerCase().includes(want)));
+    let pool = byLanguage(all.filter((v) => (v.Tier || "") !== "ultra"), want);
     if (a.gender && a.gender !== "any") pool = pool.filter((v) => v.Gender.toLowerCase() === a.gender);
-    if (!pool.length) return text(`No FreeTTS voice for "${a.language}". list_voices with no language shows the 149 languages available.`);
+    if (!pool.length) return text(`No FreeTTS voice for "${a.language}". list_voices with no language shows every language available.`);
     const use = (a.use || "").toLowerCase();
     const wants = use.match(/child|kid|story|bedtime/) ? ["Cheerful", "Friendly", "Warm", "Cartoon"] : use.match(/news|announce|corporate|formal/) ? ["Formal", "Confident", "Authoritative", "Newscast"] : use.match(/meditat|sleep|calm|relax/) ? ["Calm", "Soothing", "Warm", "Gentle"] : use.match(/ad|promo|market|sale/) ? ["Confident", "Bright", "Upbeat", "Positive"] : ["Warm", "Friendly", "Clear", "Approachable"];
     const score = (v: Voice) => (v.VoiceTag?.VoicePersonalities || []).reduce((s, p) => s + (wants.some((w) => p.toLowerCase().includes(w.toLowerCase())) ? 2 : 0), 0) + (v.Locale.toLowerCase() === want ? 1 : 0);
@@ -153,22 +179,24 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // ── text_to_speech ────────────────────────────────────────────────────
   server.registerTool("text_to_speech", {
     title: "Text to speech (FreeTTS)",
-    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a PRO key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
+    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
     inputSchema: {
       text: z.string().min(1).max(30000).describe("The text to read. Plain text; SSML is not needed."),
-      voice: z.string().optional().describe("A FreeTTS voice id from list_voices, like en-US-JennyNeural. If empty, a good standard voice for the language is chosen."),
+      voice: z.string().optional().describe("A FreeTTS voice id from list_voices, like en-US-JennyNeural (a short name like 'Jenny' also works). If empty, a good standard voice for the language is chosen."),
       language: z.string().optional().describe("Language of the text when no voice is given, like 'German' or 'pt-BR'."),
       speed: z.number().int().min(-30).max(30).optional().describe("Percent slower (negative) or faster (positive). Default 0."),
-      format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav (PRO keys)."),
+      format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav (with a FreeTTS key)."),
       include_audio: z.boolean().optional().describe("Also return the audio bytes in the result (large). Default false; the link is enough for most clients."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (a) => {
     const chars = a.text.length;
+    if (!a.text.trim()) return fail("The text is empty. Give the words to read.");
     let voice = (a.voice || "").trim();
     const all = await voices();
-    let v = voice ? all.find((x) => x.ShortName.toLowerCase() === voice.toLowerCase() || (x.FriendlyName || "").toLowerCase() === voice.toLowerCase()) : undefined;
+    let v = voice ? findVoice(all, voice, a.language) : undefined;
     if (voice && !v) return fail(`"${voice}" is not a FreeTTS voice id. Use list_voices to find one (ids look like en-US-JennyNeural or de-DE-Florian:DragonHDLatestNeural).`);
+    if (v) voice = v.ShortName;   // the id the API knows, whatever form the caller used
     if (v && (v.Tier || "") === "ultra") return fail(`${v.ShortName} is an Ultra voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
     const isAnon = caller.kind === "anon";
     let note = "";
@@ -188,10 +216,12 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const hk = requestHash([caller.kind, caller.kind === "key" ? caller.apiKey! : caller.ip, a.text, voice, fmt, rate || ""]);
     const cached = recent.get(hk);
     if (cached) return cached.result;
+    let refund: (() => void) | null = null;
     if (isAnon) {
       const why = anonCheck(caller, chars);
       if (why) return fail(why);
       if (!CONFIG.serviceApiKey) return fail(`Calls without a key are not set up on this server yet. ${KEYS_HELP}`);
+      refund = anonReserve(caller, chars);
     }
     try {
       const r = await tts(isAnon ? CONFIG.serviceApiKey : caller.apiKey!, { text: a.text, voice, output_format: fmt, ...(rate ? { rate } : {}) });
@@ -199,7 +229,6 @@ export function registerTools(server: McpServer, caller: Caller): void {
       let kept = "30 days";
       let localId: string | null = null;
       if (isAnon) {
-        anonCharge(caller, chars);
         const raw = await download(r.file_id);
         localId = await watermarkAndStore(raw);
         url = publicAudioUrl(localId);
@@ -218,7 +247,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       const result: CallToolResult = { content, structuredContent: { url, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon } };
       recent.set(hk, { at: Date.now(), result });
       return result;
-    } catch (e) { return fail(apiErrorText(e, caller)); }
+    } catch (e) { refund?.(); return fail(apiErrorText(e, caller)); }
   });
 
   // ── check_usage ───────────────────────────────────────────────────────
@@ -238,7 +267,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       const lines = [
         `Plan: ${u.plan.toUpperCase()}${u.plan_type ? ` (${u.plan_type})` : ""}.`,
         u.daily_chars_limit != null ? `Today: ${u.daily_chars_used?.toLocaleString()} of ${u.daily_chars_limit.toLocaleString()} characters used, ${u.daily_chars_left?.toLocaleString()} left.` : "",
-        `This month: ${u.monthly_chars_used.toLocaleString()} of ${u.monthly_chars_limit.toLocaleString()} characters used, ${u.monthly_chars_left.toLocaleString()} left${u.monthly_reset_date ? `, resets ${u.monthly_reset_date}` : ""}.`,
+        `This month: ${u.monthly_chars_used.toLocaleString()} of ${u.monthly_chars_limit.toLocaleString()} characters used, ${u.monthly_chars_left.toLocaleString()} left${u.monthly_reset_date && String(u.monthly_reset_date).slice(0, 10) > today() ? `, resets ${String(u.monthly_reset_date).slice(0, 10)}` : ""}.`,
         `Per request: ${u.per_request_chars.toLocaleString()} characters. ${u.requests_per_minute} requests a minute. HD and Signature voices: ${u.hd_voices ? "yes" : "no (PRO)"}. Watermark: ${u.watermark ? "yes, on free audio" : "none"}. Files kept ${u.audio_kept}.`,
         u.plan === "free" ? `Plans: ${PRICING}` : "",
       ].filter(Boolean);
@@ -265,18 +294,21 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const all = await voices();
     const speakers = [...new Set(parsed.map((x) => x!.who))];
     const chosen: Record<string, string> = {};
-    const pool = all.filter((v) => (v.Tier || "") !== "ultra" && (!a.language || v.Locale.toLowerCase().startsWith(a.language.toLowerCase().split("-")[0]) || (v.LocaleName || "").toLowerCase().includes(a.language.toLowerCase())) && v.Source !== "google");
-    const defaults = pool.filter(isFreeVoice);
+    const pool = byLanguage(all.filter((v) => (v.Tier || "") !== "ultra" && v.Source !== "google"), a.language || "en-US");
+    // Standard voices of the language, the usual ones first, so a scene sounds like the language's main region.
+    const main = (await pickDefaultVoice(a.language || "en-US", true))?.Locale;
+    const defaults = pool.filter(isFreeVoice).sort((x, y) => ((x.Locale === main ? 0 : 2) + (PREFERRED.includes(x.ShortName) ? 0 : 1)) - ((y.Locale === main ? 0 : 2) + (PREFERRED.includes(y.ShortName) ? 0 : 1)));
+    const taken = () => Object.values(chosen);
     let k = 0;
     for (const s of speakers) {
       const asked = a.voices?.[s];
       if (asked) {
-        const v = all.find((x) => x.ShortName.toLowerCase() === asked.toLowerCase());
+        const v = findVoice(all, asked, a.language);
         if (!v) return fail(`"${asked}" (for ${s}) is not a FreeTTS voice id. Use list_voices.`);
         chosen[s] = v.ShortName;
       } else {
-        const gender = k % 2 === 0 ? "male" : "female";
-        const pick = defaults.find((v) => v.Gender.toLowerCase() === gender && !Object.values(chosen).includes(v.ShortName)) || defaults.find((v) => !Object.values(chosen).includes(v.ShortName)) || defaults[0];
+        const gender = genderFor(s) || (k % 2 === 0 ? "male" : "female");
+        const pick = defaults.find((v) => v.Gender.toLowerCase() === gender && !taken().includes(v.ShortName)) || defaults.find((v) => !taken().includes(v.ShortName)) || defaults[0];
         if (!pick) return fail(`No voice found for "${a.language}". Give voices per speaker.`);
         chosen[s] = pick.ShortName; k++;
       }
@@ -334,10 +366,11 @@ export function registerTools(server: McpServer, caller: Caller): void {
         me: a.my_part || "",
         myLines: a.my_part ? "gap" : "read",
       });
-      const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-      const trackLines = rec.tracks.map((t) => `${String(t.index + 1).padStart(2, "0")} ${t.title}: ${audioUrl(t.file_id)} (${fmt(t.duration)}, ${t.sentences} sentences)`);
+      const fmt = (s: number) => { const r = Math.max(1, Math.round(s)); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, "0")}`; };
+      const n = (x: number, word: string) => `${x} ${word}${x === 1 ? "" : "s"}`;
+      const trackLines = rec.tracks.map((t) => `${String(t.index + 1).padStart(2, "0")} ${t.title}: ${audioUrl(t.file_id)} (${fmt(t.duration)}, ${n(t.sentences, "sentence")})`);
       const content: CallToolResult["content"] = [
-        { type: "text", text: `Recorded ${rec.sentences} sentences${rec.tracks.length > 1 ? ` in ${rec.tracks.length} tracks` : ""}.\nEverything in one file: ${audioUrl(rec.full.file_id)} (${fmt(rec.full.duration)})\n${rec.tracks.length > 1 ? trackLines.join("\n") : ""}\nMP3, kept 30 days. Pauses and sounds are exact; change a word and record again, only that sentence is new audio in the Studio.`.trim() },
+        { type: "text", text: [`Recorded ${n(rec.sentences, "sentence")}${rec.tracks.length > 1 ? ` in ${rec.tracks.length} tracks` : ""}.`, `Everything in one file: ${audioUrl(rec.full.file_id)} (${fmt(rec.full.duration)})`, ...(rec.tracks.length > 1 ? trackLines : []), "MP3, kept 30 days. Pauses and sounds are exact; change a word and record again, only that sentence is new audio in the Studio."].join("\n") },
         { type: "resource_link", uri: audioUrl(rec.full.file_id), name: "freetts-script-all-tracks.mp3", mimeType: "audio/mpeg" },
         ...rec.tracks.slice(0, 20).map((t): CallToolResult["content"][number] => ({ type: "resource_link", uri: audioUrl(t.file_id), name: `${String(t.index + 1).padStart(2, "0")}-${t.title.replace(/[^A-Za-z0-9]+/g, "-").slice(0, 40)}.mp3`, mimeType: "audio/mpeg" })),
       ];
@@ -351,25 +384,19 @@ export function registerTools(server: McpServer, caller: Caller): void {
     description: "Turn a recording into text with FreeTTS speech to text. Give a public https URL to an audio file (mp3, wav, m4a, ogg, webm). Needs a connected FreeTTS account; length limits follow the account's plan.",
     inputSchema: {
       audio_url: z.string().url().describe("Public https URL of the audio file."),
-      language: z.string().optional().describe("Language code like 'en', 'de', 'ar', or 'auto' (default)."),
+      language: z.string().optional().describe("Language of the recording, like 'en-US', 'de-DE', 'Arabic' or 'es', or 'auto' to detect it (default)."),
     },
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
-    let u: URL;
-    try { u = new URL(a.audio_url); } catch { return fail("audio_url must be a full https URL."); }
-    if (u.protocol !== "https:" || /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[)/.test(u.hostname)) return fail("audio_url must be a public https address.");
     try {
-      const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 60_000);
-      const r = await fetch(u, { signal: ctrl.signal, redirect: "follow" }); clearTimeout(t);
-      if (!r.ok) return fail(`Could not fetch the audio (${r.status}).`);
-      const len = Number(r.headers.get("content-length") || 0);
-      if (len > 60_000_000) return fail("The file is over 60 MB. Trim it or split it.");
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (buf.length > 60_000_000) return fail("The file is over 60 MB. Trim it or split it.");
-      const mime = r.headers.get("content-type")?.split(";")[0] || "audio/mpeg";
-      const name = u.pathname.split("/").pop() || "audio";
-      const res = await transcribe(caller.apiKey!, buf, name, mime, a.language || "auto");
+      const { buf, mime, url } = await safeFetch(a.audio_url, 60_000_000);
+      if (mime && !/^(audio|video)\//.test(mime) && mime !== "application/octet-stream") return fail(`That address is ${mime.includes("html") ? "a web page" : `a ${mime} file`}, not audio. Give the direct link to the audio file (mp3, wav, m4a, ogg, webm).`);
+      const type = /^(audio|video)\//.test(mime) ? mime : "audio/mpeg";
+      // The transcriber takes a full locale (en-US); 'en', 'German' or 'Arabic (Egypt)' become one, anything unknown is detected.
+      const asked = (a.language || "auto").trim();
+      const locale = /^auto$/i.test(asked) ? "auto" : /^[a-z]{2,3}-[a-z]{2,4}$/i.test(asked) ? asked.replace(/^([a-z]+)-([a-z]+)$/i, (_m, l: string, r: string) => `${l.toLowerCase()}-${r.length === 2 ? r.toUpperCase() : r}`) : (await pickDefaultVoice(asked, false))?.Locale || "auto";
+      const res = await transcribe(caller.apiKey!, buf, audioFileName(url, type), type, locale);
       const out = (res.text || res.transcript || (Array.isArray(res.segments) ? (res.segments as Array<{ text?: string }>).map((s) => s.text || "").join(" ") : "")) as string;
       if (!out) return fail("FreeTTS returned no text for this file.");
       return { content: [{ type: "text", text: out }], structuredContent: { text: out, language: res.language ?? null } };

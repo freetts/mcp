@@ -125,6 +125,11 @@ app.all(MCP_PATH, (req, res) => {
   if (req.method === "DELETE") { res.setHeader("Allow", "POST, OPTIONS"); return res.status(405).end(); }
  handleMcp(req, res).catch((e) => { console.error("mcp", e); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null }); }); });
 
-app.use((err: Error, _q: Request, res: Response, _n: NextFunction) => { console.error(err); if (!res.headersSent) res.status(500).json({ error: "server_error" }); });
+app.use((err: Error & { type?: string; status?: number }, _q: Request, res: Response, _n: NextFunction) => {
+  // A body that is not JSON is the caller's mistake: JSON-RPC's parse error, not a server error.
+  if (err.type === "entity.parse.failed") return void res.status(400).json({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error: the body is not valid JSON." }, id: null });
+  if (err.type === "entity.too.large") return void res.status(413).json({ jsonrpc: "2.0", error: { code: -32600, message: "Request too large." }, id: null });
+  console.error(err); if (!res.headersSent) res.status(500).json({ error: "server_error" });
+});
 
 app.listen(CONFIG.port, CONFIG.host, () => console.log(`freetts mcp ${pkg.version} on ${CONFIG.host}:${CONFIG.port} -> ${RESOURCE}`));
