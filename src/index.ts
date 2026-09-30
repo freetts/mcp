@@ -34,6 +34,9 @@ mountOAuth(app);
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
 app.get("/icon-:size.png", (req: Request, res: Response) => { if (!["128", "256", "512"].includes(String(req.params.size))) return res.status(404).end(); res.setHeader("Cache-Control", "public, max-age=86400"); res.sendFile(`icon-${req.params.size}.png`, { root: ASSETS }, (err) => { if (err && !res.headersSent) res.status(404).end(); }); });
 
+app.get("/robots.txt", (_q, res) => res.type("text/plain").send("User-agent: *
+Disallow: /
+"));
 app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
 // Free-tier audio, one hour
@@ -116,7 +119,12 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
 // A person opening the address in a browser gets the documentation.
 app.get("/", (_q, res) => res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`));
 app.all(MCP_PATH, (req, res) => {
-  if (req.method === "GET" && req.accepts(["text/event-stream", "text/html"]) === "text/html") return res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`);
+  if (req.method === "GET") {
+    // People get the documentation; clients asking for a standalone notification stream get 405, since this server is stateless and never pushes.
+    if (req.accepts(["text/event-stream", "text/html"]) === "text/html") return res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`);
+    res.setHeader("Allow", "POST, OPTIONS"); return res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed. This server is stateless: send JSON-RPC by POST." }, id: null });
+  }
+  if (req.method === "DELETE") { res.setHeader("Allow", "POST, OPTIONS"); return res.status(405).end(); }
  handleMcp(req, res).catch((e) => { console.error("mcp", e); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "Internal error" }, id: null }); }); });
 
 app.use((err: Error, _q: Request, res: Response, _n: NextFunction) => { console.error(err); if (!res.headersSent) res.status(500).json({ error: "server_error" }); });
