@@ -7,7 +7,7 @@ export const CONFIG = {
   port: Number(env("PORT", "8788")),
   host: env("HOST", "127.0.0.1"),
   /** Where clients reach us. Metadata and audio links are built from it. */
-  publicUrl: env("PUBLIC_URL", "https://mcp.freetts.org").replace(/\/$/, ""),
+  publicUrl: env("PUBLIC_URL", "https://freetts.org").replace(/\/$/, ""),
   /** FastAPI on this machine. */
   apiUrl: env("FASTAPI_URL", "http://127.0.0.1:8042").replace(/\/$/, ""),
   /** Public address of the site (links in replies). */
@@ -27,7 +27,7 @@ export const CONFIG = {
     perMinute: Number(env("ANON_PER_MINUTE", "10")),
     /** Everyone without an account together, per day. Protects the Azure bill. */
     poolDailyChars: Number(env("ANON_POOL_DAILY_CHARS", "300000")),
-    /** Free audio lives this long on mcp.freetts.org. */
+    /** Free audio lives this long on freetts.org/mcp-audio. */
     keepMs: 60 * 60 * 1000,
   },
   /** How long an access token lives. Refresh tokens rotate on use. */

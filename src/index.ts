@@ -25,16 +25,15 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use((_q, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, x-api-key"); res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"); res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate"); next(); });
-app.options("*", (_q, res) => res.sendStatus(204));
+app.options("/{*path}", (_q, res) => res.sendStatus(204));
 
 mountOAuth(app);
 
-app.get("/", (_q, res) => res.redirect(302, `${CONFIG.siteUrl}/developers/mcp`));
-app.get("/health", (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
+app.get("/mcp/health", (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
 // Free-tier audio, one hour
-app.get("/audio/:id.mp3", (req: Request, res: Response) => {
-  const p = storedPath(String(req.params.id));
+app.get("/mcp-audio/:file", (req: Request, res: Response) => {
+  const p = storedPath(String(req.params.file).replace(/\.mp3$/, ""));
   if (!p) return res.status(404).end();
   res.setHeader("Cache-Control", "private, max-age=3600");
   res.setHeader("Content-Type", "audio/mpeg");

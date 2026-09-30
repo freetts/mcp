@@ -34,7 +34,7 @@ function apiErrorText(e: unknown, caller: Caller): string {
     const msg = typeof d === "string" ? d : d?.error || e.message;
     if (e.status === 429) return `FreeTTS is rate limiting this ${caller.kind === "anon" ? "connection" : "key"} (too many requests in a minute). Wait a moment and try again.`;
     if (e.status === 402 || (typeof d === "object" && d?.limit_type)) return `${msg} ${caller.kind === "anon" ? KEYS_HELP : `Plans: ${PRICING}`}`;
-    if (e.status === 401) return `FreeTTS did not accept the API key. Check it in ${DASH} (API keys), or connect again.`;
+    if (e.status === 401) return caller.kind === "key" && /sign in/i.test(String(msg)) ? `This account tool is not switched on for API keys on freetts.org yet. text_to_speech works with your key today; the dialogue, Script mode and transcription tools follow in the next site update.` : `FreeTTS did not accept the API key. Check it in ${DASH} (API keys), or connect again.`;
     if (e.status === 422 || e.status === 400) return String(msg);
     return `FreeTTS could not make the audio (${e.status}). ${msg}`;
   }

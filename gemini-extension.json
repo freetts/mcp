@@ -4,7 +4,7 @@
   "description": "Text to speech with FreeTTS: read text aloud and get an MP3 link, in 149 languages. Free without an account.",
   "mcpServers": {
     "freetts": {
-      "httpUrl": "https://mcp.freetts.org/mcp"
+      "httpUrl": "https://freetts.org/mcp"
     }
   }
 }

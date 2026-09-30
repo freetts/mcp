@@ -63,8 +63,23 @@ export interface Usage {
   monthly_chars_limit: number; monthly_chars_used: number; monthly_chars_left: number; monthly_reset_date: string | null;
   hd_voices: boolean; watermark: boolean; audio_kept: string; daily_chars_limit?: number; daily_chars_used?: number; daily_chars_left?: number;
 }
-export function usage(apiKey: string): Promise<Usage> {
-  return call<Usage>("/api/v1/usage", { apiKey, timeoutMs: 20_000 });
+export async function usage(apiKey: string): Promise<Usage> {
+  try {
+    return await call<Usage>("/api/v1/usage", { apiKey, timeoutMs: 20_000 });
+  } catch (e) {
+    // Until the site ships /api/v1/usage, a key is checked the way the API
+    // checks it on a real call: a 404 here means the route is not live yet,
+    // so the key is accepted for text_to_speech and the plan is unknown.
+    if (e instanceof ApiError && e.status === 404) {
+      // Prove the key the way the API proves it, with the smallest real call.
+      // A bad key gets the API's own 401 here.
+      const r = await tts(apiKey, { text: "Ok.", voice: "en-US-JennyNeural", output_format: "mp3" });
+      const limit = Number(r.chars_limit || 0);
+      const plan = limit >= 5_000_000 ? "creator" : limit >= 150_000 ? "pro" : "free";
+      return { plan, plan_type: null, per_request_chars: plan === "creator" ? 25000 : plan === "pro" ? 10000 : 5000, requests_per_minute: plan === "creator" ? 1000 : plan === "pro" ? 200 : 10, monthly_chars_limit: limit, monthly_chars_used: Number(r.chars_used || 0), monthly_chars_left: Math.max(0, limit - Number(r.chars_used || 0)), monthly_reset_date: null, hd_voices: plan !== "free", watermark: plan === "free", audio_kept: plan === "free" ? "1 hour" : "30 days" };
+    }
+    throw e;
+  }
 }
 
 // ── Several voices: the Studio's dialogue route ───────────────────────────
@@ -94,7 +109,7 @@ export function merge(apiKey: string, clips: Clip[], lead_in = 0): Promise<{ fil
 export interface SttResult { text?: string; transcript?: string; segments?: unknown[]; language?: string; duration?: number; [k: string]: unknown }
 export async function transcribe(apiKey: string, audio: Buffer, filename: string, mime: string, language = "auto", durationSec = 0): Promise<SttResult> {
   const form = new FormData();
-  form.append("audio", new Blob([audio], { type: mime }), filename);
+  form.append("audio", new Blob([new Uint8Array(audio)], { type: mime }), filename);
   form.append("language", language);
   form.append("diarization", "false");
   form.append("durationSec", String(durationSec));
