@@ -34,7 +34,7 @@ With a key: add `--header "Authorization: Bearer ft_live_..."`, or run `/mcp` in
 
 **Claude (web, desktop, mobile):** Settings, Connectors, Add custom connector, paste `https://mcp.freetts.org/mcp`. Free tools work at once; when a tool needs your account Claude shows Connect.
 
-**Cursor:** [Install in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=FreeTTS&config=eyJ1cmwiOiJodHRwczovL2ZyZWV0dHMub3JnL21jcCJ9), or in `~/.cursor/mcp.json`:
+**Cursor:** [Install in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=FreeTTS&config=eyJ1cmwiOiJodHRwczovL21jcC5mcmVldHRzLm9yZy9tY3AifQ==), or in `~/.cursor/mcp.json`:
 ```json
 { "mcpServers": { "freetts": { "url": "https://mcp.freetts.org/mcp" } } }
 ```
