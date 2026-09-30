@@ -1,6 +1,6 @@
 {
   "name": "freetts",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Text to speech with FreeTTS: read text aloud and get an MP3 link, in 149 languages. Free without an account.",
   "mcpServers": {
     "freetts": {

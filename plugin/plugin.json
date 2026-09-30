@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "freetts",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Text to speech in 149 languages with 2,253 voices: MP3 links, voice suggestions, multi-voice dialogue, timed tracks with exact pauses, and speech to text.",
   "author": {
     "name": "Outline Technologies LLC",
@@ -35,7 +35,7 @@
         ],
         "websiteURL": "https://freetts.org/developers/mcp",
         "supportURL": "https://freetts.org/contact",
-        "privacyPolicyURL": "https://freetts.org/privacy",
+        "privacyPolicyURL": "https://mcp.freetts.org/privacy",
         "termsOfServiceURL": "https://freetts.org/terms",
         "defaultPrompt": [
           "Read this aloud with a warm British voice: Welcome to our spring newsletter.",

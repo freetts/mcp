@@ -4,7 +4,8 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { PRIVACY_HTML } from "./privacy.js";
 import { join } from "node:path";
 import { CONFIG, MCP_PATH, RESOURCE } from "./config.js";
 import { loadStore } from "./store.js";
@@ -19,6 +20,9 @@ import pkg from "../package.json" with { type: "json" };
 loadStore();
 startAudioReaper();
 mkdirSync(join(CONFIG.stateDir, "log"), { recursive: true });
+// Request logs are kept 30 days (the privacy notice says so): older daily files are deleted.
+const pruneLogs = () => { const cut = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10); try { for (const f of readdirSync(join(CONFIG.stateDir, "log"))) if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f) && f.slice(0, 10) < cut) unlinkSync(join(CONFIG.stateDir, "log", f)); } catch { /* never fail on cleanup */ } };
+pruneLogs(); setInterval(pruneLogs, 6 * 3_600_000).unref();
 const logLine = (o: Record<string, unknown>) => { try { appendFileSync(join(CONFIG.stateDir, "log", `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ t: new Date().toISOString(), ...o }) + "\n"); } catch { /* never fail a call for a log */ } };
 
 const app = express();
@@ -35,7 +39,8 @@ mountOAuth(app);
 const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
 app.get("/icon-:size.png", (req: Request, res: Response) => { if (!["128", "256", "512"].includes(String(req.params.size))) return res.status(404).end(); res.setHeader("Cache-Control", "public, max-age=86400"); res.sendFile(`icon-${req.params.size}.png`, { root: ASSETS }, (err) => { if (err && !res.headersSent) res.status(404).end(); }); });
 
-app.get("/robots.txt", (_q, res) => res.type("text/plain").send(["User-agent: *", "Disallow: /", ""].join(String.fromCharCode(10))));
+app.get("/privacy", (_q, res) => { res.setHeader("Cache-Control", "public, max-age=3600"); res.type("html").send(PRIVACY_HTML); });
+app.get("/robots.txt", (_q, res) => res.type("text/plain").send(["User-agent: *", "Allow: /privacy", "Disallow: /", ""].join(String.fromCharCode(10))));
 app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
 // Free-tier audio, one hour
