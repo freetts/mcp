@@ -23,12 +23,31 @@
     "url": "https://github.com/freetts/mcp",
     "source": "github"
   },
-  "version": "1.0.4",
+  "version": "1.0.5",
   "websiteUrl": "https://freetts.org/developers/mcp",
   "remotes": [
     {
       "type": "streamable-http",
       "url": "https://mcp.freetts.org/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@freetts/mcp",
+      "version": "1.0.5",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FREETTS_API_KEY",
+          "description": "Your FreeTTS API key from https://freetts.org/dashboard (API keys). A free key works; PRO adds HD voices, WAV, dialogue, Script mode and transcription.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
     }
   ]
 }

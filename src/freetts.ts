@@ -19,7 +19,7 @@ export class ApiError extends Error {
 }
 
 async function call<T>(path: string, init: RequestInit & { apiKey?: string; ip?: string; timeoutMs?: number } = {}): Promise<T> {
-  const headers: Record<string, string> = { "x-freetts-source": "mcp", ...(init.headers as Record<string, string> || {}) };
+  const headers: Record<string, string> = { "x-freetts-source": CONFIG.local ? "mcp-local" : "mcp", "User-Agent": CONFIG.local ? "FreeTTS-MCP-local/1 (+https://freetts.org/developers/mcp)" : "FreeTTS-MCP/1", ...(init.headers as Record<string, string> || {}) };
   if (init.apiKey) headers["x-api-key"] = init.apiKey;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), init.timeoutMs ?? 120_000);

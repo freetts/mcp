@@ -1,15 +1,48 @@
 {
   "name": "@freetts/mcp",
-  "version": "1.0.4",
+  "version": "1.0.5",
+  "mcpName": "org.freetts/mcp",
   "description": "FreeTTS MCP server: text to speech for Claude, ChatGPT, Cursor, VS Code, Codex and any MCP client. Free without an account, more with a FreeTTS key.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "text-to-speech",
+    "tts",
+    "speech-to-text",
+    "voice",
+    "audio",
+    "claude",
+    "cursor",
+    "freetts"
+  ],
+  "homepage": "https://freetts.org/developers/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freetts/mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/freetts/mcp/issues"
+  },
+  "author": "FreeTTS (https://freetts.org)",
   "license": "MIT",
   "type": "module",
-  "private": true,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "freetts-mcp": "dist/stdio.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p .",
     "start": "node dist/index.js",
-    "dev": "tsc -p . && node dist/index.js"
+    "start:local": "node dist/stdio.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",

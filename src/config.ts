@@ -10,6 +10,8 @@ export const CONFIG = {
   publicUrl: env("PUBLIC_URL", "https://mcp.freetts.org").replace(/\/$/, ""),
   /** FastAPI on this machine. */
   apiUrl: env("FASTAPI_URL", "http://127.0.0.1:8042").replace(/\/$/, ""),
+  /** Local mode (stdio.ts): runs on the user's machine against the public API with their own key. */
+  local: env("FREETTS_MCP_LOCAL") === "1",
   /** Public address of the site (links in replies). */
   siteUrl: "https://freetts.org",
   /** The service's own FreeTTS key, for callers who have no account. */

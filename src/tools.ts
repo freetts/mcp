@@ -249,7 +249,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     if (isAnon) {
       const why = anonCheck(caller, chars);
       if (why) return fail(why);
-      if (!CONFIG.serviceApiKey) return fail(`Calls without a key are not set up on this server yet. ${KEYS_HELP}`);
+      if (!CONFIG.serviceApiKey) return fail(CONFIG.local ? `This local FreeTTS server needs your FreeTTS API key to make audio: set FREETTS_API_KEY (a free key works). ${KEYS_HELP} Or use the hosted server https://mcp.freetts.org/mcp, which works without a key.` : `Calls without a key are not set up on this server yet. ${KEYS_HELP}`);
       refund = anonReserve(caller, chars);
     }
     try {
@@ -422,7 +422,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     if (caller.plan === "free") return fail(`Speech to text is part of FreeTTS PRO. Plans: ${PRICING}`);
     try {
       const { buf, mime, url } = await safeFetch(a.audio_url, 60_000_000);
-      if (mime && !/^(audio|video)\//.test(mime) && mime !== "application/octet-stream") return fail(`That address is ${mime.includes("html") ? "a web page" : `a ${mime} file`}, not audio. Give the direct link to the audio file (mp3, wav, m4a, ogg, webm).`);
+      if (mime && !/^(audio|video)\//.test(mime) && mime !== "application/octet-stream") return fail(`That address is ${mime.includes("html") ? "a web page" : `a file of type ${mime}`}, not audio. Give the direct link to the audio file (mp3, wav, m4a, ogg, webm).`);
       const type = /^(audio|video)\//.test(mime) ? mime : "audio/mpeg";
       // The transcriber takes a full locale (en-US); 'en', 'German' or 'Arabic (Egypt)' become one, anything unknown is detected.
       const asked = (a.language || "auto").trim();

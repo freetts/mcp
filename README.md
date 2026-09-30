@@ -68,13 +68,32 @@ The server is an OAuth 2.1 authorization server (PKCE, dynamic client registrati
 
 The text you send is sent to FreeTTS and its speech providers exactly as from the website, under the [FreeTTS privacy policy](https://freetts.org/privacy). Calls without a key are metered by the caller's IP address. The server logs tool name, plan, character count, client name and outcome, never the text.
 
-## Running it yourself
+## Run it locally (stdio)
+
+The same server also runs on your own machine, for clients that start local servers or when you would rather keep a key in a local config. It talks to the public FreeTTS API with your own key. Get one at [freetts.org/dashboard](https://freetts.org/dashboard) (API keys; a free account has one).
 
 ```
-npm ci && npm run build
-PUBLIC_URL=https://mcp.example.com FASTAPI_URL=http://127.0.0.1:8042 FREETTS_SERVICE_API_KEY=ft_live_... MCP_JWT_SECRET=... node dist/index.js
+FREETTS_API_KEY=ft_live_... npx -y @freetts/mcp
 ```
 
-It expects a FreeTTS API server behind `FASTAPI_URL`; the public one is not reachable that way, so this is for FreeTTS itself. The code is here so you can read what the server does.
+Claude Desktop, Cursor, Cline, Windsurf and similar clients:
+
+```json
+{
+  "mcpServers": {
+    "freetts": {
+      "command": "npx",
+      "args": ["-y", "@freetts/mcp"],
+      "env": { "FREETTS_API_KEY": "ft_live_..." }
+    }
+  }
+}
+```
+
+Without a key it still starts: `list_voices`, `suggest_voice`, the prompts and the resources work, and making audio asks for a key. The hosted server at `https://mcp.freetts.org/mcp` needs no key at all.
+
+From source: `npm install && npm run build && node dist/stdio.js`. Node.js 20 or later.
+
+The hosted server itself (`dist/index.js`) runs next to the FreeTTS API on FreeTTS's own machines and is not meant to be self-hosted; the code is here so you can read exactly what it does.
 
 License: MIT.
