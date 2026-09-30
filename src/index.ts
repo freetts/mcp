@@ -13,6 +13,7 @@ import { startAudioReaper, storedPath } from "./audio.js";
 import { mountOAuth, keyFromAccessToken, wwwAuthenticate } from "./oauth.js";
 import { registerTools, PROTECTED_TOOLS, platformSpent, type Caller } from "./tools.js";
 import { overLimit, platformOf } from "./limits.js";
+import { registerExtras } from "./extras.js";
 import { usage } from "./freetts.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -108,8 +109,9 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
     logLine({ ev: "auth_required", tool: protectedTool, ip: caller.ip, ua: caller.userAgent });
     return;
   }
-  const server = new McpServer({ name: "freetts", title: "FreeTTS", version: pkg.version, websiteUrl: `${CONFIG.siteUrl}/developers/mcp`, icons: [{ src: `${CONFIG.publicUrl}/icon-512.png`, mimeType: "image/png", sizes: ["512x512"] }, { src: `${CONFIG.publicUrl}/icon-128.png`, mimeType: "image/png", sizes: ["128x128"] }] }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, adds HD voices, WAV, dialogue_to_speech, script_to_tracks and transcribe_audio." });
+  const server = new McpServer({ name: "freetts", title: "FreeTTS", version: pkg.version, websiteUrl: `${CONFIG.siteUrl}/developers/mcp`, icons: [{ src: `${CONFIG.publicUrl}/icon-512.png`, mimeType: "image/png", sizes: ["512x512"] }, { src: `${CONFIG.publicUrl}/icon-128.png`, mimeType: "image/png", sizes: ["128x128"] }] }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, adds HD voices, WAV, dialogue_to_speech, script_to_tracks and transcribe_audio. Before script_to_tracks, read the resource freetts://script-mode/syntax; freetts://plans lists what each plan allows." });
   registerTools(server, caller);
+  registerExtras(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   const t0 = Date.now();
   res.on("finish", () => {

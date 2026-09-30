@@ -48,11 +48,8 @@
       },
       "annotations": {
         "readOnlyHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "execution": {
-        "taskSupport": "forbidden"
+        "openWorldHint": false,
+        "idempotentHint": true
       }
     },
     {
@@ -87,11 +84,8 @@
       },
       "annotations": {
         "readOnlyHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "execution": {
-        "taskSupport": "forbidden"
+        "openWorldHint": false,
+        "idempotentHint": true
       }
     },
     {
@@ -145,9 +139,6 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": true
-      },
-      "execution": {
-        "taskSupport": "forbidden"
       }
     },
     {
@@ -155,17 +146,14 @@
       "title": "Check FreeTTS usage and plan",
       "description": "Show the FreeTTS plan behind this connection and what is left: characters today or this month, requests a minute, HD voices, watermark. Use it when the user asks about limits, their plan, or why a request was refused.",
       "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
-        "properties": {},
-        "$schema": "http://json-schema.org/draft-07/schema#"
+        "properties": {}
       },
       "annotations": {
         "readOnlyHint": true,
-        "idempotentHint": true,
-        "openWorldHint": false
-      },
-      "execution": {
-        "taskSupport": "forbidden"
+        "openWorldHint": false,
+        "idempotentHint": true
       }
     },
     {
@@ -210,9 +198,6 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": true
-      },
-      "execution": {
-        "taskSupport": "forbidden"
       }
     },
     {
@@ -289,9 +274,6 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": true
-      },
-      "execution": {
-        "taskSupport": "forbidden"
       }
     },
     {
@@ -319,20 +301,139 @@
       },
       "annotations": {
         "readOnlyHint": true,
-        "idempotentHint": true,
-        "openWorldHint": true
-      },
-      "execution": {
-        "taskSupport": "forbidden"
+        "openWorldHint": true,
+        "idempotentHint": true
       }
     }
   ],
-  "version": "1.0.3",
+  "version": "1.0.4",
   "tags": [
     "text-to-speech",
     "tts",
     "audio",
     "voice",
     "speech-to-text"
+  ],
+  "prompts": [
+    {
+      "name": "read_aloud",
+      "title": "Read text aloud",
+      "description": "Turn a text into an MP3 with a fitting FreeTTS voice.",
+      "arguments": [
+        {
+          "name": "text",
+          "description": "The text to read.",
+          "required": true
+        },
+        {
+          "name": "language",
+          "description": "Language of the text, if not English.",
+          "required": false
+        },
+        {
+          "name": "voice",
+          "description": "A voice name or id, if you have one in mind.",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "two_host_podcast",
+      "title": "Two-host podcast episode",
+      "description": "Write a short two-host episode on a topic and record it with a voice per host (FreeTTS PRO).",
+      "arguments": [
+        {
+          "name": "topic",
+          "description": "What the episode is about.",
+          "required": true
+        },
+        {
+          "name": "host_a",
+          "description": "First host's name. Default Maya.",
+          "required": false
+        },
+        {
+          "name": "host_b",
+          "description": "Second host's name. Default Omar.",
+          "required": false
+        },
+        {
+          "name": "minutes",
+          "description": "About how long, in minutes. Default 2.",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "timed_voiceover",
+      "title": "Timed voiceover or prompter track",
+      "description": "Prepare a script with exact pauses, cues and tracks and record it with Script mode (FreeTTS PRO).",
+      "arguments": [
+        {
+          "name": "script",
+          "description": "The words to be spoken, as you have them.",
+          "required": true
+        },
+        {
+          "name": "purpose",
+          "description": "What it is for: an ear prompter, a video voiceover, a workout, a rehearsal track...",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "choose_voice",
+      "title": "Choose a voice",
+      "description": "Find three FreeTTS voices for a language and a use, then hear the best one.",
+      "arguments": [
+        {
+          "name": "language",
+          "description": "The language or accent, like 'English (UK)' or 'Arabic'.",
+          "required": true
+        },
+        {
+          "name": "use",
+          "description": "What the audio is for, like audiobook, ad or children's story.",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "uri": "freetts://languages",
+      "name": "languages",
+      "title": "FreeTTS languages",
+      "description": "Every language and regional variant FreeTTS speaks, with how many voices each has and how many are free.",
+      "mimeType": "text/markdown"
+    },
+    {
+      "uri": "freetts://voices/free",
+      "name": "free-voices",
+      "title": "Free FreeTTS voices",
+      "description": "The standard voices that work without a FreeTTS key or on a free account, with id, name, gender and language.",
+      "mimeType": "application/json"
+    },
+    {
+      "uri": "freetts://script-mode/syntax",
+      "name": "script-mode-syntax",
+      "title": "Script mode syntax",
+      "description": "How to write a script for script_to_tracks: exact pauses, beeps and dings, tracks, cues in a second voice, scenes with a voice per character.",
+      "mimeType": "text/markdown"
+    },
+    {
+      "uri": "freetts://plans",
+      "name": "plans",
+      "title": "FreeTTS plans and limits",
+      "description": "What works without an account, on a free account and on PRO through this server: voices, characters, formats, tools.",
+      "mimeType": "text/markdown"
+    },
+    {
+      "name": "voices-by-language",
+      "uriTemplate": "freetts://voices/{language}",
+      "title": "FreeTTS voices for a language",
+      "description": "Every voice for one language or locale (for example en-US, de, Arabic), with tier and whether it is free.",
+      "mimeType": "application/json"
+    }
   ]
 }
