@@ -5,7 +5,7 @@
   "description": "Text to speech in 149 languages: MP3 links from any assistant. Free without an account. 2,253 voices; PRO adds HD voices, WAV, dialogue with a voice per speaker, Script mode timing and transcription.",
   "homepage": "https://freetts.org/developers/mcp",
   "icon": "https://mcp.freetts.org/icon-512.png",
-  "identifier": "freetts",
+  "identifier": "freetts-mcp",
   "name": "FreeTTS",
   "tools": [
     {
