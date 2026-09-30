@@ -11,7 +11,8 @@ import { CONFIG, MCP_PATH, RESOURCE } from "./config.js";
 import { loadStore } from "./store.js";
 import { startAudioReaper, storedPath } from "./audio.js";
 import { mountOAuth, keyFromAccessToken, wwwAuthenticate } from "./oauth.js";
-import { registerTools, PROTECTED_TOOLS, type Caller } from "./tools.js";
+import { registerTools, PROTECTED_TOOLS, platformSpent, type Caller } from "./tools.js";
+import { overLimit, platformOf } from "./limits.js";
 import { usage } from "./freetts.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -58,6 +59,7 @@ async function planForKey(key: string): Promise<string | null> {
 /** Who is calling: an API key (header or bearer), a token we issued, or nobody. */
 async function resolveCaller(req: Request): Promise<{ caller: Caller; badToken: boolean }> {
   const ip = clientIp(req);
+  const platform = platformOf(ip);
   const ua = String(req.headers["user-agent"] || "").slice(0, 120);
   const auth = String(req.headers.authorization || "");
   let key = String(req.headers["x-api-key"] || "").trim();
@@ -67,16 +69,18 @@ async function resolveCaller(req: Request): Promise<{ caller: Caller; badToken: 
     if (/^ft_live_/.test(tok)) key = tok;
     else if (tok) {
       const k = await keyFromAccessToken(tok);
-      if (k) return { caller: { kind: "key", apiKey: k.apiKey, plan: k.plan, ip, userAgent: ua }, badToken: false };
+      if (k) return { caller: { kind: "key", apiKey: k.apiKey, plan: k.plan, ip, userAgent: ua, platform }, badToken: false };
       badToken = true;
     }
   }
   if (key) {
+    // Guessing keys: a handful of wrong ones per address, then nothing is checked for a while.
+    if (!keyPlans.has(key) && overLimit("keycheck", ip, platform ? 3000 : 30, 600_000)) return { caller: { kind: "anon", ip, userAgent: ua, platform }, badToken: true };
     const plan = await planForKey(key);
-    if (plan) return { caller: { kind: "key", apiKey: key, plan, ip, userAgent: ua }, badToken: false };
+    if (plan) return { caller: { kind: "key", apiKey: key, plan, ip, userAgent: ua, platform }, badToken: false };
     badToken = true;
   }
-  return { caller: { kind: "anon", ip, userAgent: ua }, badToken };
+  return { caller: { kind: "anon", ip, userAgent: ua, platform }, badToken };
 }
 
 const callsProtected = (body: unknown): string | null => {
@@ -88,8 +92,15 @@ const callsProtected = (body: unknown): string | null => {
 };
 
 async function handleMcp(req: Request, res: Response): Promise<void> {
+  if (overLimit("mcp", clientIp(req), platformOf(clientIp(req)) ? 6000 : 180, 60_000)) { res.status(429).set("Retry-After", "60").json({ jsonrpc: "2.0", error: { code: -32000, message: "Too many requests from this address. Wait a minute." }, id: null }); return; }
   const { caller, badToken } = await resolveCaller(req);
-  const protectedTool = req.method === "POST" ? callsProtected(req.body) : null;
+  let protectedTool = req.method === "POST" ? callsProtected(req.body) : null;
+  // On claude.ai and ChatGPT every guest shares the platform's allowance; once it is spent,
+  // making audio asks the person to connect their own (free) account instead.
+  if (!protectedTool && req.method === "POST" && platformSpent(caller)) {
+    const wantsAudio = (Array.isArray(req.body) ? req.body : [req.body]).some((m: { method?: string; params?: { name?: string } }) => m?.method === "tools/call" && m.params?.name === "text_to_speech");
+    if (wantsAudio) protectedTool = "text_to_speech";
+  }
   // Sign-in only for the tools that need an account: a transport-level 401
   // makes Claude and other clients show their Connect flow, then retry.
   if ((protectedTool && caller.kind !== "key") || (badToken && req.method === "POST")) {
@@ -97,7 +108,7 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
     logLine({ ev: "auth_required", tool: protectedTool, ip: caller.ip, ua: caller.userAgent });
     return;
   }
-  const server = new McpServer({ name: "freetts", title: "FreeTTS", version: pkg.version, websiteUrl: `${CONFIG.siteUrl}/developers/mcp`, icons: [{ src: `${CONFIG.publicUrl}/icon-512.png`, mimeType: "image/png", sizes: ["512x512"] }, { src: `${CONFIG.publicUrl}/icon-128.png`, mimeType: "image/png", sizes: ["128x128"] }] }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, adds HD voices, dialogue_to_speech and script_to_tracks." });
+  const server = new McpServer({ name: "freetts", title: "FreeTTS", version: pkg.version, websiteUrl: `${CONFIG.siteUrl}/developers/mcp`, icons: [{ src: `${CONFIG.publicUrl}/icon-512.png`, mimeType: "image/png", sizes: ["512x512"] }, { src: `${CONFIG.publicUrl}/icon-128.png`, mimeType: "image/png", sizes: ["128x128"] }] }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, adds HD voices, WAV, dialogue_to_speech, script_to_tracks and transcribe_audio." });
   registerTools(server, caller);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   const t0 = Date.now();
@@ -105,8 +116,8 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
     if (req.method !== "POST") return;
     for (const m of Array.isArray(req.body) ? req.body : [req.body]) {
       const msg = m as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
-      if (msg?.method === "tools/call") logLine({ ev: "call", tool: msg.params?.name, kind: caller.kind, plan: caller.plan || null, chars: typeof msg.params?.arguments?.text === "string" ? (msg.params.arguments.text as string).length : undefined, status: res.statusCode, ms: Date.now() - t0, ip: caller.ip, ua: caller.userAgent });
-      else if (msg?.method === "initialize") logLine({ ev: "initialize", client: (msg.params as { clientInfo?: { name?: string; version?: string } })?.clientInfo || null, kind: caller.kind, ip: caller.ip, ua: caller.userAgent });
+      if (msg?.method === "tools/call") logLine({ ev: "call", tool: msg.params?.name, kind: caller.kind, plan: caller.plan || null, platform: caller.platform || undefined, chars: typeof msg.params?.arguments?.text === "string" ? (msg.params.arguments.text as string).length : undefined, status: res.statusCode, ms: Date.now() - t0, ip: caller.ip, ua: caller.userAgent });
+      else if (msg?.method === "initialize") logLine({ ev: "initialize", client: (msg.params as { clientInfo?: { name?: string; version?: string } })?.clientInfo || null, kind: caller.kind, platform: caller.platform || undefined, ip: caller.ip, ua: caller.userAgent });
     }
   });
   await server.connect(transport);

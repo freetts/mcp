@@ -14,6 +14,8 @@ import { SignJWT, jwtVerify } from "jose";
 import { CONFIG, RESOURCE, MCP_PATH } from "./config.js";
 import { store, today, type OAuthClient } from "./store.js";
 import { usage, ApiError } from "./freetts.js";
+import { safeFetch } from "./safefetch.js";
+import { overLimit, platformOf } from "./limits.js";
 
 const ISSUER = CONFIG.publicUrl;
 const SCOPES = ["tts", "account"];
@@ -74,12 +76,8 @@ async function resolveClient(clientId: string): Promise<OAuthClient | null> {
   // Client ID Metadata Document: the client id is an https URL that serves its own registration.
   if (/^https:\/\//.test(clientId)) {
     try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const r = await fetch(clientId, { headers: { Accept: "application/json" }, signal: ctrl.signal });
-      clearTimeout(t);
-      if (!r.ok) return null;
-      const doc = await r.json() as { client_id?: string; client_name?: string; redirect_uris?: string[] };
+      const { buf } = await safeFetch(clientId, 64_000, 8000);
+      const doc = JSON.parse(buf.toString("utf8")) as { client_id?: string; client_name?: string; redirect_uris?: string[] };
       if (doc.client_id !== clientId || !Array.isArray(doc.redirect_uris)) return null;
       const client: OAuthClient = { client_id: clientId, client_name: doc.client_name || new URL(clientId).hostname, redirect_uris: doc.redirect_uris, created: Date.now() };
       store.get().clients[clientId] = client; store.touch();
@@ -111,6 +109,7 @@ export function mountOAuth(app: Express): void {
 
   // Dynamic Client Registration
   app.post("/oauth/register", (req: Request, res: Response) => {
+    if (overLimit("register", req.ip || "", platformOf(req.ip || "") ? 20_000 : 20, 3_600_000)) return res.status(429).json({ error: "too_many_requests", error_description: "Too many registrations from this address. Try again later." });
     const body = (req.body || {}) as { client_name?: string; redirect_uris?: unknown };
     const uris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((u): u is string => typeof u === "string") : [];
     if (!uris.length || uris.some((u) => { try { const x = new URL(u); return !(x.protocol === "https:" || ["127.0.0.1", "localhost", "[::1]"].includes(x.hostname)); } catch { return true; } })) {
@@ -123,6 +122,7 @@ export function mountOAuth(app: Express): void {
 
   // Authorization: check the request, then show the connect page.
   app.get("/oauth/authorize", async (req: Request, res: Response) => {
+    if (overLimit("authorize", req.ip || "", 60, 600_000) || pending.size > 20_000) return res.status(429).send(page("Slow down", `<h1>Too many requests</h1><p>Wait a few minutes, then connect again.</p>`));
     const q = req.query as Record<string, string | undefined>;
     const client = q.client_id ? await resolveClient(q.client_id) : null;
     if (!client) return res.status(400).send(page("Unknown client", `<h1>Unknown client</h1><p>This assistant is not registered with FreeTTS. Ask it to connect again.</p>`));
@@ -138,6 +138,7 @@ export function mountOAuth(app: Express): void {
 
   // The person pastes a key; we check it and hand a code back to the assistant.
   app.post("/oauth/consent", async (req: Request, res: Response) => {
+    if (overLimit("consent", req.ip || "", 20, 600_000)) return res.status(429).send(page("Slow down", `<h1>Too many attempts</h1><p>Wait ten minutes, then connect again from your assistant.</p>`));
     const rid = String((req.body || {}).rid || "");
     const key = String((req.body || {}).api_key || "").trim();
     const p = pending.get(rid);
@@ -160,6 +161,7 @@ export function mountOAuth(app: Express): void {
 
   // Tokens
   app.post("/oauth/token", async (req: Request, res: Response) => {
+    if (overLimit("token", req.ip || "", platformOf(req.ip || "") ? 50_000 : 120, 600_000)) return res.status(429).json({ error: "too_many_requests", error_description: "Slow down." });
     const b = (req.body || {}) as Record<string, string>;
     const fail = (error: string, desc: string, status = 400) => res.status(status).json({ error, error_description: desc });
     if (b.grant_type === "authorization_code") {

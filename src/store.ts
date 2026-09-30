@@ -58,6 +58,12 @@ function prune(): void {
   }
   const today = new Date().toISOString().slice(0, 10);
   for (const d of Object.keys(state.pool)) if (d < today) { delete state.pool[d]; dirty = true; }
+  // Registered clients with no live code or token: gone after 30 days, and never more than 5,000 of them.
+  const used = new Set([...Object.values(state.codes).map((c) => c.client_id), ...Object.values(state.refresh).map((r) => r.client_id)]);
+  const idle = Object.values(state.clients).filter((c) => !used.has(c.client_id)).sort((a, b) => a.created - b.created);
+  for (const c of idle) if (c.created < now - 30 * 86_400_000) { delete state.clients[c.client_id]; dirty = true; }
+  const over = Object.keys(state.clients).length - 5000;
+  if (over > 0) for (const c of idle.slice(0, over)) { delete state.clients[c.client_id]; dirty = true; }
 }
 
 export const today = () => new Date().toISOString().slice(0, 10);

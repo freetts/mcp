@@ -18,6 +18,8 @@ export interface Caller {
   plan?: string;
   ip: string;
   userAgent: string;
+  /** Set when the call comes from claude.ai's or ChatGPT's servers: guests there cannot be told apart. */
+  platform?: "claude" | "chatgpt" | null;
 }
 
 /** Tools that need an account. Calls without a token get a 401 before the SDK runs (see index.ts). */
@@ -53,19 +55,45 @@ function apiErrorText(e: unknown, caller: Caller): string {
 }
 
 // ── Anonymous metering (what a website guest gets) ────────────────────────
+/** The meter a guest counts against: the address, or for IPv6 its /64 (one subscriber's block, so rotating addresses in it does not reset the allowance). */
+export function meterId(ip: string): string {
+  if (!ip.includes(":") || /^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(ip)) return ip.replace(/^::ffff:/i, "");
+  const [head, tail = ""] = ip.toLowerCase().split("::");
+  const h = head ? head.split(":") : []; const t = tail ? tail.split(":") : [];
+  const full = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t];
+  return full.slice(0, 4).map((x) => x.replace(/^0+(?=.)/, "")).join(":") + "::/64";
+}
+
+/** The meter a guest counts against: their address (a /64 on IPv6), or the whole platform on claude.ai and ChatGPT. */
+export const meterKey = (caller: Caller) => caller.platform ? `platform:${caller.platform}` : meterId(caller.ip);
+const PLATFORM_NAME = { claude: "Claude", chatgpt: "ChatGPT" } as const;
+
+/** Characters guests used in the last day on this meter. */
+function dayUsed(caller: Caller): number {
+  const m = store.get().anon[meterKey(caller)]; const now = Date.now();
+  return m ? m.chars.filter(([t]) => t > now - 86_400_000).reduce((x, [, c]) => x + c, 0) : 0;
+}
+/** A platform's guest allowance is spent: the next request should ask the person to connect their own account. */
+export const platformSpent = (caller: Caller) => !!caller.platform && caller.kind === "anon" && dayUsed(caller) >= CONFIG.anon.platformDailyChars - 50;
+
 function anonCheck(caller: Caller, chars: number): string | null {
   const a = CONFIG.anon;
   if (chars > a.perCallChars) return `Without a FreeTTS key, one call can read up to ${a.perCallChars.toLocaleString()} characters; this text is ${chars.toLocaleString()}. Split it, or add a key. ${KEYS_HELP}`;
   const s = store.get();
-  const m = (s.anon[caller.ip] ||= { calls: [], chars: [] });
+  const m = (s.anon[meterKey(caller)] ||= { calls: [], chars: [] });
   const now = Date.now();
+  const perMinute = caller.platform ? a.platformPerMinute : a.perMinute;
   m.calls = m.calls.filter((t) => t > now - 60_000);
-  if (m.calls.length >= a.perMinute) return `Without a key, this connection can make ${a.perMinute} requests a minute. Wait a moment, or add a key. ${KEYS_HELP}`;
+  if (m.calls.length >= perMinute) return `Without a key, this connection can make ${perMinute} requests a minute. Wait a moment, or add a key. ${KEYS_HELP}`;
   m.chars = m.chars.filter(([t]) => t > now - 86_400_000);
   const day = m.chars.reduce((x, [, c]) => x + c, 0);
-  const hour = m.chars.filter(([t]) => t > now - 3_600_000).reduce((x, [, c]) => x + c, 0);
-  if (day + chars > a.dailyChars) return `Without a key, FreeTTS reads ${a.dailyChars.toLocaleString()} characters a day per connection; ${day.toLocaleString()} are used. ${KEYS_HELP}`;
-  if (hour + chars > a.hourlyChars) return `Without a key, FreeTTS reads ${a.hourlyChars.toLocaleString()} characters an hour per connection. Try again later, or add a key. ${KEYS_HELP}`;
+  if (caller.platform) {
+    if (day + chars > a.platformDailyChars) return `Free audio without an account is used up for today on ${PLATFORM_NAME[caller.platform]}. Connect your free FreeTTS account to keep going with 5,000 characters a day of your own: ${DASH} (API keys).`;
+  } else {
+    const hour = m.chars.filter(([t]) => t > now - 3_600_000).reduce((x, [, c]) => x + c, 0);
+    if (day + chars > a.dailyChars) return `Without a key, FreeTTS reads ${a.dailyChars.toLocaleString()} characters a day per connection; ${day.toLocaleString()} are used. ${KEYS_HELP}`;
+    if (hour + chars > a.hourlyChars) return `Without a key, FreeTTS reads ${a.hourlyChars.toLocaleString()} characters an hour per connection. Try again later, or add a key. ${KEYS_HELP}`;
+  }
   const pool = s.pool[today()] || 0;
   if (pool + chars > a.poolDailyChars) return `The free pool for callers without an account is used up for today. A free FreeTTS key keeps working: ${KEYS_HELP}`;
   return null;
@@ -73,7 +101,7 @@ function anonCheck(caller: Caller, chars: number): string | null {
 /** Counted before the synthesis starts, so parallel calls cannot pass the limits together; handed back if it fails. */
 function anonReserve(caller: Caller, chars: number): () => void {
   const s = store.get();
-  const m = (s.anon[caller.ip] ||= { calls: [], chars: [] });
+  const m = (s.anon[meterKey(caller)] ||= { calls: [], chars: [] });
   const at = Date.now(); const day = today();
   const call = at; const entry: [number, number] = [at, chars];
   m.calls.push(call); m.chars.push(entry);
@@ -179,13 +207,13 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // ── text_to_speech ────────────────────────────────────────────────────
   server.registerTool("text_to_speech", {
     title: "Text to speech (FreeTTS)",
-    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
+    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS PRO key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
     inputSchema: {
       text: z.string().min(1).max(30000).describe("The text to read. Plain text; SSML is not needed."),
       voice: z.string().optional().describe("A FreeTTS voice id from list_voices, like en-US-JennyNeural (a short name like 'Jenny' also works). If empty, a good standard voice for the language is chosen."),
       language: z.string().optional().describe("Language of the text when no voice is given, like 'German' or 'pt-BR'."),
       speed: z.number().int().min(-30).max(30).optional().describe("Percent slower (negative) or faster (positive). Default 0."),
-      format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav (with a FreeTTS key)."),
+      format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav (FreeTTS PRO)."),
       include_audio: z.boolean().optional().describe("Also return the audio bytes in the result (large). Default false; the link is enough for most clients."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -211,9 +239,10 @@ export function registerTools(server: McpServer, caller: Caller): void {
       v = alt; voice = alt.ShortName;
     }
     const fmt = a.format || "mp3";
-    if (isAnon && fmt === "wav") return fail(`WAV needs a FreeTTS key. ${KEYS_HELP}`);
+    if (isAnon && fmt === "wav") return fail(`WAV is part of FreeTTS PRO. Without a key the audio is MP3. ${KEYS_HELP}`);
+    if (fmt === "wav" && caller.plan === "free") return fail(`WAV is part of FreeTTS PRO; a free key gets MP3. Plans: ${PRICING}`);
     const rate = a.speed ? `${a.speed > 0 ? "+" : ""}${a.speed}%` : undefined;
-    const hk = requestHash([caller.kind, caller.kind === "key" ? caller.apiKey! : caller.ip, a.text, voice, fmt, rate || ""]);
+    const hk = requestHash([caller.kind, caller.kind === "key" ? caller.apiKey! : meterKey(caller), a.text, voice, fmt, rate || ""]);
     const cached = recent.get(hk);
     if (cached) return cached.result;
     let refund: (() => void) | null = null;
@@ -258,8 +287,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
     annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
   }, async () => {
     if (caller.kind === "anon") {
-      const a = CONFIG.anon; const m = store.get().anon[caller.ip]; const now = Date.now();
-      const day = m ? m.chars.filter(([t]) => t > now - 86_400_000).reduce((x, [, c]) => x + c, 0) : 0;
+      const a = CONFIG.anon; const day = dayUsed(caller);
+      if (caller.platform) return text(`No FreeTTS account is connected. Guests on ${PLATFORM_NAME[caller.platform]} share a free allowance: standard voices, ${a.perCallChars.toLocaleString()} characters a call, a short spoken FreeTTS tag at the end, files kept 1 hour. Connecting your free FreeTTS account gives you 5,000 characters a day of your own. ${KEYS_HELP}`);
       return text(`No FreeTTS key on this connection. Free without a key: standard voices, ${a.perCallChars.toLocaleString()} characters a call, ${a.dailyChars.toLocaleString()} a day (${day.toLocaleString()} used), ${a.perMinute} requests a minute, a short spoken FreeTTS tag at the end, files kept 1 hour. ${KEYS_HELP}`);
     }
     try {
@@ -278,7 +307,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // ── dialogue_to_speech (account) ──────────────────────────────────────
   server.registerTool("dialogue_to_speech", {
     title: "Dialogue to speech (two or more voices)",
-    description: "Turn a script with several speakers into one audio file, a different FreeTTS voice per speaker, with a pause between lines. Write each line as 'Name: text'. Use it for two-host shows, interviews, scenes, language lessons with two speakers. Needs a FreeTTS account connected to this server; the full feature is PRO (a free account can try one short scene a day).",
+    description: "Turn a script with several speakers into one audio file, a different FreeTTS voice per speaker, with a pause between lines. Write each line as 'Name: text'. Use it for two-host shows, interviews, scenes, language lessons with two speakers. Needs a connected FreeTTS PRO account.",
     inputSchema: {
       script: z.string().min(1).max(25000).describe("Lines like 'Abd: Tonight we cook shakshuka.' one per line. Names before the colon."),
       voices: z.record(z.string(), z.string()).optional().describe("Speaker name to FreeTTS voice id, like {\"Abd\": \"en-US-AndrewNeural\", \"Guest\": \"en-US-EmmaNeural\"}. Unnamed speakers get a voice each."),
@@ -288,6 +317,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
+    if (caller.plan === "free") return fail(`Dialogue with several voices is part of FreeTTS PRO. The free plan can make single-voice audio with text_to_speech. Plans: ${PRICING}`);
     const lines = a.script.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const parsed = lines.map((l) => { const m = /^([^:]{1,40}):\s*(.+)$/.exec(l); return m ? { who: m[1].trim(), text: m[2].trim() } : null; });
     if (parsed.some((x) => !x) || !parsed.length) return fail("Every line needs a speaker name before a colon, like 'Abd: Hello there.'");
@@ -381,7 +411,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // ── transcribe_audio (account) ────────────────────────────────────────
   server.registerTool("transcribe_audio", {
     title: "Transcribe audio (speech to text)",
-    description: "Turn a recording into text with FreeTTS speech to text. Give a public https URL to an audio file (mp3, wav, m4a, ogg, webm). Needs a connected FreeTTS account; length limits follow the account's plan.",
+    description: "Turn a recording into text with FreeTTS speech to text. Give a public https URL to an audio file (mp3, wav, m4a, ogg, webm). Needs a connected FreeTTS PRO account.",
     inputSchema: {
       audio_url: z.string().url().describe("Public https URL of the audio file."),
       language: z.string().optional().describe("Language of the recording, like 'en-US', 'de-DE', 'Arabic' or 'es', or 'auto' to detect it (default)."),
@@ -389,6 +419,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     annotations: { readOnlyHint: true, openWorldHint: true, idempotentHint: true },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${KEYS_HELP}`);
+    if (caller.plan === "free") return fail(`Speech to text is part of FreeTTS PRO. Plans: ${PRICING}`);
     try {
       const { buf, mime, url } = await safeFetch(a.audio_url, 60_000_000);
       if (mime && !/^(audio|video)\//.test(mime) && mime !== "application/octet-stream") return fail(`That address is ${mime.includes("html") ? "a web page" : `a ${mime} file`}, not audio. Give the direct link to the audio file (mp3, wav, m4a, ogg, webm).`);

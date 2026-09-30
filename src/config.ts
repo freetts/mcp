@@ -25,6 +25,9 @@ export const CONFIG = {
     dailyChars: Number(env("ANON_DAILY_CHARS", "2000")),
     hourlyChars: Number(env("ANON_HOURLY_CHARS", "3000")),
     perMinute: Number(env("ANON_PER_MINUTE", "10")),
+    /** Guests on claude.ai or ChatGPT all arrive from the platform's servers: one meter per platform. */
+    platformDailyChars: Number(env("ANON_PLATFORM_DAILY_CHARS", "60000")),
+    platformPerMinute: Number(env("ANON_PLATFORM_PER_MINUTE", "120")),
     /** Everyone without an account together, per day. Protects the Azure bill. */
     poolDailyChars: Number(env("ANON_POOL_DAILY_CHARS", "300000")),
     /** Free audio lives this long under mcp.freetts.org/audio/. */

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "freetts": {
+      "type": "http",
+      "url": "https://mcp.freetts.org/mcp"
+    }
+  }
+}

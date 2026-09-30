@@ -16,13 +16,13 @@ Ask your assistant to read something aloud, and it calls FreeTTS and hands you a
 | `list_voices` | Voices for a language or search word, with ids. | Nothing |
 | `suggest_voice` | Three voices for a language and a use, with reasons. | Nothing |
 | `check_usage` | Plan and characters left. | Nothing |
-| `dialogue_to_speech` | `Name: line` script, a voice per speaker, one file. | A FreeTTS account (PRO for the full feature) |
+| `dialogue_to_speech` | `Name: line` script, a voice per speaker, one file. | FreeTTS PRO |
 | `script_to_tracks` | Script mode: exact `(pause 2)`, `(beep)`, `(ding)`, `TRACK:` files, `CUE:` voice, scenes. | FreeTTS PRO |
-| `transcribe_audio` | A public audio URL in, text out. | A FreeTTS account |
+| `transcribe_audio` | A public audio URL in, text out. | FreeTTS PRO |
 
 **Free without a key:** standard voices, 2,000 characters a call and a day per connection, 10 requests a minute, a short spoken "FreeTTS" tag at the end, files kept one hour.
 
-**With a FreeTTS key** (free account or PRO): the account's plan. PRO: HD and Signature voices, no tag, 10,000 characters a call, 1,000,000 a month, WAV, files kept 30 days, dialogue and Script mode tools. Keys: [freetts.org/dashboard](https://freetts.org/dashboard) (API keys).
+**With a FreeTTS key** (free account or PRO): the account's plan. PRO: HD and Signature voices, no tag, 10,000 characters a call, 1,000,000 a month, WAV, files kept 30 days, and the dialogue, Script mode and transcription tools. Keys: [freetts.org/dashboard](https://freetts.org/dashboard) (API keys).
 
 ## Add it to your client
 
