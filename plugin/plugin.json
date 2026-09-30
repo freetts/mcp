@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "freetts",
-  "version": "1.0.6",
-  "description": "Text to speech in 149 languages with 2,253 voices: MP3 links from any assistant. Free without an account; PRO adds HD voices, WAV, dialogue, timed Script mode and transcription.",
+  "version": "1.0.7",
+  "description": "Text to speech in 149 languages with 2,253 voices: MP3 links, voice suggestions, multi-voice dialogue, timed tracks with exact pauses, and speech to text.",
   "author": {
     "name": "Outline Technologies LLC",
     "email": "info@freetts.org",
@@ -26,14 +26,15 @@
       "interface": {
         "displayName": "FreeTTS",
         "shortDescription": "Text to speech, 149 languages",
-        "longDescription": "Turn any text into natural speech and get an MP3 link you can play or download.\n\nChoose from 2,253 voices in 149 languages and regional accents, or let FreeTTS suggest three voices for your language and purpose, from audiobooks and lessons to ads and podcasts. Standard voices work without an account.\n\nConnect a FreeTTS account for more: HD and Signature voices, no spoken tag, WAV files, dialogue with a different voice for each speaker, Script mode for timed tracks with exact pauses, beeps and dings (for presenters, actors, teachers and video voiceovers), and speech to text from an audio link.\n\nFreeTTS never sells anything in the chat. When a request needs another plan, it says so and links to the plans page.",
+        "longDescription": "Turn any text into natural speech and get an MP3 link you can play or download.\n\nChoose from 2,253 voices in 149 languages and regional accents, or ask FreeTTS to suggest three voices for your language and purpose, from audiobooks and lessons to ads and podcasts.\n\nRecord a dialogue with a different voice for each speaker, build timed tracks with exact pauses, beeps and dings for presenters, actors, teachers and video voiceovers, and turn an audio link into text.\n\nSome features, such as HD voices, dialogue, timed tracks and transcription, work once you connect your FreeTTS account.",
         "developerName": "Outline Technologies LLC",
-        "category": "Productivity",
+        "category": "Creativity",
         "capabilities": [
           "Read",
           "Write"
         ],
         "websiteURL": "https://freetts.org/developers/mcp",
+        "supportURL": "https://freetts.org/contact",
         "privacyPolicyURL": "https://freetts.org/privacy",
         "termsOfServiceURL": "https://freetts.org/terms",
         "defaultPrompt": [
