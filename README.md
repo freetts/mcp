@@ -34,12 +34,12 @@ With a key: add `--header "Authorization: Bearer ft_live_..."`, or run `/mcp` in
 
 **Claude (web, desktop, mobile):** Settings, Connectors, Add custom connector, paste `https://mcp.freetts.org/mcp`. Free tools work at once; when a tool needs your account Claude shows Connect.
 
-**Cursor:** [Install in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=freetts&config=eyJ1cmwiOiJodHRwczovL2ZyZWV0dHMub3JnL21jcCJ9), or in `~/.cursor/mcp.json`:
+**Cursor:** [Install in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=FreeTTS&config=eyJ1cmwiOiJodHRwczovL2ZyZWV0dHMub3JnL21jcCJ9), or in `~/.cursor/mcp.json`:
 ```json
 { "mcpServers": { "freetts": { "url": "https://mcp.freetts.org/mcp" } } }
 ```
 
-**VS Code:** [Install in VS Code](https://vscode.dev/redirect/mcp/install?name=freetts&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Ffreetts.org%2Fmcp%22%7D), or in `.vscode/mcp.json`:
+**VS Code:** [Install in VS Code](https://vscode.dev/redirect/mcp/install?name=FreeTTS&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fmcp.freetts.org%2Fmcp%22%7D), or in `.vscode/mcp.json`:
 ```json
 { "servers": { "freetts": { "type": "http", "url": "https://mcp.freetts.org/mcp" } } }
 ```

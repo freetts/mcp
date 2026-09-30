@@ -1,6 +1,6 @@
 {
   "name": "@freetts/mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FreeTTS MCP server: text to speech for Claude, ChatGPT, Cursor, VS Code, Codex and any MCP client. Free without an account, more with a FreeTTS key.",
   "license": "MIT",
   "type": "module",

@@ -2,6 +2,7 @@
 // builds a server bound to the caller (anonymous, or a FreeTTS API key from a
 // header or from an access token we issued) and answers it.
 import express, { type Request, type Response, type NextFunction } from "express";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -28,6 +29,10 @@ app.use((_q, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); 
 app.options("/{*path}", (_q, res) => res.sendStatus(204));
 
 mountOAuth(app);
+
+// The logo, for clients that show one next to the server (same host as the server, as the spec asks).
+const ASSETS = fileURLToPath(new URL("../assets/", import.meta.url));
+app.get("/icon-:size.png", (req: Request, res: Response) => { if (!["128", "256", "512"].includes(String(req.params.size))) return res.status(404).end(); res.setHeader("Cache-Control", "public, max-age=86400"); res.sendFile(`icon-${req.params.size}.png`, { root: ASSETS }, (err) => { if (err && !res.headersSent) res.status(404).end(); }); });
 
 app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
@@ -91,7 +96,7 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
     logLine({ ev: "auth_required", tool: protectedTool, ip: caller.ip, ua: caller.userAgent });
     return;
   }
-  const server = new McpServer({ name: "freetts", version: pkg.version }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, unlocks HD voices, dialogue_to_speech and script_to_tracks." });
+  const server = new McpServer({ name: "freetts", title: "FreeTTS", version: pkg.version, websiteUrl: `${CONFIG.siteUrl}/developers/mcp`, icons: [{ src: `${CONFIG.publicUrl}/icon-512.png`, mimeType: "image/png", sizes: ["512x512"] }, { src: `${CONFIG.publicUrl}/icon-128.png`, mimeType: "image/png", sizes: ["128x128"] }] }, { instructions: "FreeTTS turns text into spoken audio in 149 languages. Call text_to_speech with the text (and a voice from list_voices or suggest_voice) and give the user the returned link. Without a FreeTTS key the free voices work with a daily allowance; a key from freetts.org/dashboard raises the limits and, on PRO, adds HD voices, dialogue_to_speech and script_to_tracks." });
   registerTools(server, caller);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   const t0 = Date.now();
