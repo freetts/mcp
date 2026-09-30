@@ -1,0 +1,10 @@
+#!/bin/sh
+# Strip AI attribution from every commit message (owner rule: commits are
+# authored by Outline Technologies, never co-authored by a tool). Enable once
+# per clone with: git config core.hooksPath .githooks
+msg="$1"
+tmp="$msg.tmp.$$"
+grep -viE '^[[:space:]]*(Co-Authored-By:.*(Claude|anthropic|noreply@anthropic\.com|Copilot|OpenAI|ChatGPT|Cursor)|.*Generated with \[?Claude Code)' "$msg" > "$tmp" || true
+# drop trailing blank lines left behind
+sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmp" > "$msg"
+rm -f "$tmp"

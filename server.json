@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.freetts/mcp",
+  "description": "Text to speech in 149 languages. text_to_speech returns an MP3 link; free without an account, HD voices, dialogue and timed Script mode with a FreeTTS key.",
+  "title": "FreeTTS",
+  "repository": {
+    "url": "https://github.com/freetts/mcp",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "websiteUrl": "https://freetts.org/developers/mcp",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.freetts.org/mcp"
+    }
+  ]
+}
