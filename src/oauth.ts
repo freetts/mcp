@@ -93,11 +93,24 @@ const pending = new Map<string, Pending>();
 setInterval(() => { const now = Date.now(); for (const [k, p] of pending) if (p.exp < now) pending.delete(k); }, 60_000).unref();
 
 const page = (title: string, body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
-<style>:root{color-scheme:light dark}body{margin:0;font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f0d;color:#e6f1ec;display:grid;place-items:center;min-height:100vh;padding:24px;box-sizing:border-box}
-main{max-width:460px;width:100%;background:#121815;border:1px solid #223129;border-radius:18px;padding:28px}h1{font-size:1.35rem;margin:0 0 6px}p{margin:10px 0;color:#b7c9c0}
-label{display:block;font-weight:600;margin:16px 0 6px}input{width:100%;box-sizing:border-box;font:inherit;padding:12px 14px;border-radius:10px;border:1px solid #2e4238;background:#0b0f0d;color:#fff}
-button{margin-top:16px;width:100%;font:inherit;font-weight:700;padding:13px;border:0;border-radius:10px;background:#10b981;color:#04130d;cursor:pointer}a{color:#34d399}
-.k{font-family:ui-monospace,Menlo,monospace;font-size:.92em}.err{color:#fca5a5}.brand{display:flex;align-items:center;gap:8px;font-weight:800;margin-bottom:14px}.dot{width:10px;height:10px;border-radius:50%;background:#10b981}</style></head><body><main><div class="brand"><span class="dot"></span>FreeTTS</div>${body}</main></body></html>`;
+<style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font:16px/1.55 -apple-system,"Segoe UI",Roboto,sans-serif;color:#e6f1ec;display:grid;place-items:center;min-height:100vh;padding:24px;
+background:radial-gradient(620px 380px at 18% 0%,rgba(16,185,129,.18),transparent 70%),radial-gradient(560px 360px at 100% 100%,rgba(99,102,241,.14),transparent 70%),#080c0a}
+main{max-width:480px;width:100%;background:linear-gradient(180deg,#131a17,#0f1512);border:1px solid #23322b;border-radius:24px;padding:30px 30px 26px;box-shadow:0 40px 90px -40px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.05) inset}
+h1{font-size:1.5rem;line-height:1.2;letter-spacing:-.02em;margin:0 0 8px;font-weight:800;text-wrap:balance}p{margin:10px 0;color:#a9bdb3}
+label{display:block;font-weight:700;font-size:.86rem;letter-spacing:.02em;margin:20px 0 8px;color:#dbe9e2}
+input{width:100%;font:inherit;padding:14px 16px;border-radius:13px;border:1px solid #2b3d34;background:#0a0f0c;color:#fff;transition:border-color .15s,box-shadow .15s}
+input:focus{outline:0;border-color:#10b981;box-shadow:0 0 0 4px rgba(16,185,129,.18)}input::placeholder{color:#5d7268}
+button{margin-top:14px;width:100%;font:inherit;font-weight:800;padding:14px;border:0;border-radius:13px;background:linear-gradient(180deg,#12c48b,#059669);color:#fff;cursor:pointer;box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 12px 28px -8px rgba(5,150,105,.6);transition:transform .15s,box-shadow .15s}
+button:hover{transform:translateY(-1px)}button:focus-visible,a:focus-visible{outline:2px solid #34d399;outline-offset:3px}a{color:#34d399}
+.k{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}.err{margin:14px 0 0;padding:11px 13px;border-radius:11px;border:1px solid rgba(248,113,113,.4);background:rgba(248,113,113,.1);color:#fecaca;font-size:.92rem}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.05rem;margin-bottom:20px}.brand img{width:34px;height:34px;border-radius:9px;border:1px solid #23322b}.dot{width:10px;height:10px;border-radius:50%;background:#10b981}
+.or{display:flex;align-items:center;gap:12px;margin:22px 0 14px;color:#6f857a;font-size:.72rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.or::before,.or::after{content:"";flex:1;height:1px;background:#23322b}
+.get{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:15px;border:1px solid #2b3d34;background:#0c1210;text-decoration:none;color:#e6f1ec;transition:border-color .15s,transform .15s}
+.get:hover{border-color:#10b981;transform:translateY(-1px)}.get b{display:block;font-size:.98rem}.get span{display:block;font-size:.84rem;color:#93a89e;line-height:1.4}
+.get i{flex:0 0 auto;display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:rgba(16,185,129,.14);color:#34d399;font-style:normal;font-size:1.2rem}.get em{margin-left:auto;font-style:normal;color:#34d399;font-weight:800}
+.fine{margin:18px 0 0;font-size:.8rem;line-height:1.5;color:#7d9388}
+@media (max-width:480px){main{padding:24px 20px 22px;border-radius:20px}h1{font-size:1.32rem}}
+@media (prefers-reduced-motion:reduce){button,.get,input{transition:none}}</style></head><body><main><div class="brand"><img src="${CONFIG.siteUrl}/apple-touch-icon.png" alt="" width="34" height="34">FreeTTS</div>${body}</main></body></html>`;
 
 export function mountOAuth(app: Express): void {
   // The connect page takes a key: no other site may frame it.
@@ -231,15 +244,16 @@ export async function keyFromAccessToken(token: string): Promise<{ apiKey: strin
 function connectPage(rid: string, client: OAuthClient, err: string | null): string {
   const name = (client.client_name || "your assistant").replace(/[<>&]/g, "");
   return page("Connect to FreeTTS", `
-<h1>Connect ${name} to your FreeTTS account</h1>
-<p>Paste an API key from your FreeTTS dashboard. The assistant will make audio with your plan: HD voices, no watermark and longer text on PRO. You can disconnect any time by deleting the key in the dashboard.</p>
+<h1>Connect ${name} to FreeTTS</h1>
+<p>Paste your FreeTTS key and ${name} makes audio with your plan and voices.</p>
 ${err ? `<p class="err">${err}</p>` : ""}
 <form method="post" action="/oauth/consent">
 <input type="hidden" name="rid" value="${rid}">
 <label for="k">Your FreeTTS API key</label>
-<input id="k" name="api_key" class="k" placeholder="ft_live_..." autocomplete="off" spellcheck="false" required>
+<input id="k" name="api_key" class="k" placeholder="ft_live_..." autocomplete="off" spellcheck="false" autofocus required>
 <button type="submit">Connect</button>
 </form>
-<p>No key yet? Open <a href="${CONFIG.siteUrl}/dashboard#api-keys" target="_blank" rel="noopener">Dashboard, API keys</a>, press New key, and paste it here. A free account gets one key.</p>
-<p style="font-size:.85em">Only this key is stored, on FreeTTS servers, to act for you when ${name} asks for audio. <a href="${CONFIG.siteUrl}/privacy" target="_blank" rel="noopener">Privacy</a></p>`);
+<div class="or">No key yet</div>
+<a class="get" href="${CONFIG.siteUrl}/chatgpt#key" target="_blank" rel="noopener"><i>&#9889;</i><div><b>Get my key in one press</b><span>Free account, no card. It is copied for you, then come back and paste it here.</span></div><em>&rarr;</em></a>
+<p class="fine">Only this key is stored, on FreeTTS servers, to act for you when ${name} asks for audio. Delete the key in your dashboard to disconnect. <a href="${CONFIG.siteUrl}/privacy" target="_blank" rel="noopener">Privacy</a></p>`);
 }
