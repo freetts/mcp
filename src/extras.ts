@@ -8,7 +8,7 @@ import { voices, isFreeVoice, tierLabel, byLanguage, type Voice } from "./freett
 
 const shortName = (v: Voice) => v.ShortName.split("-").slice(2).join("-").replace(/:.*$/, "").replace(/Neural$/, "").replace(/Multilingual$/, " (multilingual)");
 const row = (v: Voice) => ({ id: v.ShortName, name: shortName(v), gender: v.Gender, locale: v.Locale, language: v.LocaleName || v.Locale, tier: tierLabel(v), free: isFreeVoice(v) });
-const listable = async () => (await voices()).filter((v) => (v.Tier || "") !== "ultra");
+const listable = async () => (await voices()).filter((v) => !["ultra", "prime"].includes(v.Tier || ""));
 
 const SCRIPT_SYNTAX = `# FreeTTS Script mode syntax
 

@@ -75,7 +75,7 @@ export function findVoice(list: Voice[], asked: string, language?: string): Voic
   if (exact) return exact;
   if (!/^[a-z][a-z .'-]{1,40}$/.test(a)) return undefined;
   const short = (v: Voice) => v.ShortName.split("-").slice(2).join("-").replace(/Neural$/, "").toLowerCase();
-  const hits = list.filter((v) => short(v) === a.replace(/\s+/g, "") && (v.Tier || "") !== "ultra");
+  const hits = list.filter((v) => short(v) === a.replace(/\s+/g, "") && !["ultra", "prime"].includes(v.Tier || ""));
   if (!hits.length) return undefined;
   const inLang = language ? byLanguage(hits, language) : [];
   const rank = (v: Voice) => (inLang.includes(v) ? 0 : 2) + (v.Locale === "en-US" ? 0 : 1) + (isFreeVoice(v) ? 0 : 0.5);
@@ -87,6 +87,7 @@ export const tierLabel = (v: Voice) => {
   if (t === "signature") return "Signature";
   if (t.startsWith("hd")) return "HD";
   if (t === "ultra") return "Ultra";
+  if (t === "prime") return "Prime";
   if (t === "multilingual" || t === "turbo") return "Standard (multilingual)";
   return "Standard";
 };

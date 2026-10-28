@@ -129,7 +129,7 @@ const voiceLine = (v: Voice) => `${v.ShortName} (${v.FriendlyName || v.ShortName
 const PREFERRED = ["en-US-JennyNeural", "en-US-AndrewNeural", "en-US-AriaNeural", "en-GB-SoniaNeural", "en-AU-NatashaNeural", "en-IN-NeerjaNeural", "de-DE-KatjaNeural", "fr-FR-DeniseNeural", "fr-CA-SylvieNeural", "es-ES-ElviraNeural", "es-MX-DaliaNeural", "pt-BR-FranciscaNeural", "pt-PT-RaquelNeural", "it-IT-ElsaNeural", "ja-JP-NanamiNeural", "ko-KR-SunHiNeural", "ar-SA-ZariyahNeural", "ar-EG-SalmaNeural", "hi-IN-SwaraNeural", "zh-CN-XiaoxiaoNeural", "nl-NL-ColetteNeural", "tr-TR-EmelNeural", "ru-RU-SvetlanaNeural", "pl-PL-ZofiaNeural"];
 
 async function pickDefaultVoice(language: string | undefined, free: boolean): Promise<Voice | null> {
-  const all = (await voices()).filter((v) => (v.Tier || "") !== "ultra" && (free ? isFreeVoice(v) : true));
+  const all = (await voices()).filter((v) => !["ultra", "prime"].includes(v.Tier || "") && (free ? isFreeVoice(v) : true));
   const pool = byLanguage(all, language || "en-US");
   if (!pool.length) return null;
   return PREFERRED.map((id) => pool.find((v) => v.ShortName === id)).find(Boolean) || pool.find((v) => v.Locale.split("-")[1]?.toLowerCase() === v.Locale.split("-")[0]) || pool[0];
@@ -157,7 +157,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const all = await voices();
     const want = (a.language || "").toLowerCase().trim();
     const q = (a.search || "").toLowerCase().trim();
-    let list = all.filter((v) => (v.Tier || "") !== "ultra");
+    let list = all.filter((v) => !["ultra", "prime"].includes(v.Tier || ""));
     if (want) list = byLanguage(list, want);
     if (q) list = list.filter((v) => `${v.ShortName} ${v.FriendlyName || ""} ${(v.VoiceTag?.VoicePersonalities || []).join(" ")} ${(v.VoiceTag?.ContentCategories || []).join(" ")}`.toLowerCase().includes(q));
     if (a.gender && a.gender !== "any") list = list.filter((v) => v.Gender.toLowerCase() === a.gender);
@@ -192,7 +192,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
   }, async (a) => {
     const all = await voices();
     const want = a.language.toLowerCase().trim();
-    let pool = byLanguage(all.filter((v) => (v.Tier || "") !== "ultra"), want);
+    let pool = byLanguage(all.filter((v) => !["ultra", "prime"].includes(v.Tier || "")), want);
     if (a.gender && a.gender !== "any") pool = pool.filter((v) => v.Gender.toLowerCase() === a.gender);
     if (!pool.length) return text(`No FreeTTS voice for "${a.language}". list_voices with no language shows every language available.`);
     const use = (a.use || "").toLowerCase();
@@ -228,7 +228,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     let v = voice ? findVoice(all, voice, a.language) : undefined;
     if (voice && !v) return fail(`"${voice}" is not a FreeTTS voice id. Use list_voices to find one (ids look like en-US-JennyNeural or de-DE-Florian:DragonHDLatestNeural).`);
     if (v) voice = v.ShortName;   // the id the API knows, whatever form the caller used
-    if (v && (v.Tier || "") === "ultra") return fail(`${v.ShortName} is an Ultra voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
+    if (v && ["ultra", "prime"].includes(v.Tier || "")) return fail(`${v.ShortName} is ${v.Tier === "prime" ? "a Prime" : "an Ultra"} voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
     const isAnon = caller.kind === "anon";
     let note = "";
     if (!v) {
@@ -327,7 +327,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const all = await voices();
     const speakers = [...new Set(parsed.map((x) => x!.who))];
     const chosen: Record<string, string> = {};
-    const pool = byLanguage(all.filter((v) => (v.Tier || "") !== "ultra" && v.Source !== "google"), a.language || "en-US");
+    const pool = byLanguage(all.filter((v) => !["ultra", "prime"].includes(v.Tier || "") && v.Source !== "google"), a.language || "en-US");
     // Standard voices of the language, the usual ones first, so a scene sounds like the language's main region.
     const main = (await pickDefaultVoice(a.language || "en-US", true))?.Locale;
     const defaults = pool.filter(isFreeVoice).sort((x, y) => ((x.Locale === main ? 0 : 2) + (PREFERRED.includes(x.ShortName) ? 0 : 1)) - ((y.Locale === main ? 0 : 2) + (PREFERRED.includes(y.ShortName) ? 0 : 1)));
