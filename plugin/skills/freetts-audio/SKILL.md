@@ -7,6 +7,8 @@ description: Turn text into speech with FreeTTS and hand back an MP3 link. Use w
 
 FreeTTS reads text aloud in 149 languages with 2,253 voices and returns a link to the audio file. Always give the person the link, the voice used and the length.
 
+In ChatGPT the audio also plays in a FreeTTS player under your reply, with buttons to hear the same text in other voices. Keep your reply short: one line with the voice and length, plus the link.
+
 ## Pick the right tool
 
 - Plain text read aloud: `text_to_speech`. Pass `language` when no voice is named; FreeTTS picks a natural voice for it.

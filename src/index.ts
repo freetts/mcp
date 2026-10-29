@@ -128,6 +128,8 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
       const msg = m as { method?: string; params?: { name?: string; arguments?: Record<string, unknown> } };
       if (msg?.method === "tools/call") logLine({ ev: "call", tool: msg.params?.name, kind: caller.kind, plan: caller.plan || null, platform: caller.platform || undefined, chars: typeof msg.params?.arguments?.text === "string" ? (msg.params.arguments.text as string).length : undefined, status: res.statusCode, ms: Date.now() - t0, ip: caller.ip, ua: caller.userAgent });
       else if (msg?.method === "initialize") logLine({ ev: "initialize", client: (msg.params as { clientInfo?: { name?: string; version?: string } })?.clientInfo || null, kind: caller.kind, platform: caller.platform || undefined, ip: caller.ip, ua: caller.userAgent });
+      // Every other request by name (resources/read and the like), so host behaviour around the player can be traced. No content is logged.
+      else if (msg?.method) logLine({ ev: "rpc", method: msg.method, uri: typeof (msg.params as { uri?: unknown })?.uri === "string" ? (msg.params as { uri: string }).uri : undefined, kind: caller.kind, platform: caller.platform || undefined, status: res.statusCode, bytes: Number(res.getHeader("content-length")) || undefined, ip: caller.ip, ua: caller.userAgent });
     }
   });
   await server.connect(transport);
