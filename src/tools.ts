@@ -6,7 +6,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CONFIG } from "./config.js";
 import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, byLanguage, findVoice, type Voice } from "./freetts.js";
 import { safeFetch, FetchRefused, audioFileName } from "./safefetch.js";
-import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash } from "./audio.js";
+import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform } from "./audio.js";
+import { PLAYER_TOOL_META, pickAlternatives, voiceShortName } from "./player.js";
 import { store, today } from "./store.js";
 import { recordScript, steadyVoiceId } from "./script/record.js";
 import { DEFAULT_SETTINGS } from "./script/scriptModel.js";
@@ -220,6 +221,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
       include_audio: z.boolean().optional().describe("Also return the audio bytes in the result (large). Default false; the link is enough for most clients."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // The in-chat player (MCP Apps): hosts that render it show the audio under the answer.
+    _meta: PLAYER_TOOL_META,
   }, async (a) => {
     const chars = a.text.length;
     if (!a.text.trim()) return fail("The text is empty. Give the words to read.");
@@ -266,7 +269,15 @@ export function registerTools(server: McpServer, caller: Caller): void {
         url = publicAudioUrl(localId);
         kept = "1 hour";
       } else if (caller.plan === "free") kept = "1 hour";
-      const dur = localId ? await durationSeconds(storedPath(localId)!) : null;
+      // The player draws the real waveform; ffmpeg measures it here because
+      // account audio on freetts.org cannot be read cross-origin in the chat.
+      let wave: { peaks: number[]; seconds: number } | null = null;
+      try {
+        const bytes = localId ? await readFile(storedPath(localId)!) : await download(r.file_id);
+        wave = await waveform(bytes);
+      } catch { wave = null; }
+      const dur = wave?.seconds ?? (localId ? await durationSeconds(storedPath(localId)!) : null);
+      const usedVoice = all.find((x) => x.ShortName === r.voice) || v;
       const content: CallToolResult["content"] = [
         { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
         { type: "resource_link", uri: url, name: `freetts-${(r.voice || voice).replace(/[^A-Za-z0-9]+/g, "-")}.${fmt}`, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
@@ -276,7 +287,14 @@ export function registerTools(server: McpServer, caller: Caller): void {
         if (bytes.length <= 4_000_000) content.push({ type: "audio", data: bytes.toString("base64"), mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg" });
         else content.push({ type: "text", text: "The audio is over 4 MB, so only the link is returned." });
       }
-      const result: CallToolResult = { content, structuredContent: { url, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon } };
+      const result: CallToolResult = { content, structuredContent: {
+        url, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon,
+        // For the in-chat player: display name, language, voice tier, the real
+        // waveform, and other voices for this language that this caller can use.
+        voice_name: voiceShortName(usedVoice), language: langOf(usedVoice), tier: tierLabel(usedVoice),
+        peaks: wave?.peaks ?? null,
+        alternatives: pickAlternatives(all, usedVoice, !isAnon && caller.plan !== "free"),
+      } };
       recent.set(hk, { at: Date.now(), result });
       return result;
     } catch (e) { refund?.(); return fail(apiErrorText(e, caller)); }

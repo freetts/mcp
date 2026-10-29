@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CONFIG } from "./config.js";
 import { registerTools, type Caller } from "./tools.js";
 import { registerExtras } from "./extras.js";
+import { registerPlayer } from "./player.js";
 import pkg from "../package.json" with { type: "json" };
 
 export const VERSION: string = pkg.version;
@@ -19,5 +20,6 @@ export function createServer(caller: Caller): McpServer {
   }, { instructions: CONFIG.local ? INSTRUCTIONS_LOCAL : INSTRUCTIONS });
   registerTools(server, caller);
   registerExtras(server);
+  registerPlayer(server);
   return server;
 }

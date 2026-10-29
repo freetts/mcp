@@ -58,6 +58,38 @@ export function startAudioReaper(): void {
   void sweep();
 }
 
+/** The real shape of the audio for the in-chat player: `bars` loudness values
+ * (0.06 to 1) and the length in seconds, measured with ffmpeg. Null when the
+ * file cannot be read in time; the player then draws an even line. */
+export async function waveform(mp3: Buffer, bars = 72): Promise<{ peaks: number[]; seconds: number } | null> {
+  const RATE = 4000;
+  const dir = await mkdtemp(join(tmpdir(), "ftwav-"));
+  try {
+    const src = join(dir, "in.mp3");
+    await writeFile(src, mp3);
+    const pcm: Buffer = await new Promise((res, rej) => execFile(CONFIG.ffmpeg,
+      ["-v", "error", "-i", src, "-ac", "1", "-ar", String(RATE), "-f", "s16le", "-"],
+      { timeout: 8_000, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 },
+      (err, out) => (err ? rej(err) : res(out as Buffer))));
+    const n = Math.floor(pcm.length / 2);
+    if (n < bars) return null;
+    const per = Math.floor(n / bars);
+    const rms: number[] = [];
+    for (let b = 0; b < bars; b++) {
+      let sum = 0;
+      for (let i = b * per; i < (b + 1) * per; i++) { const v = pcm.readInt16LE(i * 2) / 32768; sum += v * v; }
+      rms.push(Math.sqrt(sum / per));
+    }
+    const top = Math.max(...rms) || 1;
+    const peaks = rms.map((v) => Math.round(Math.max(0.06, Math.sqrt(v / top)) * 100) / 100);
+    return { peaks, seconds: Math.round((n / RATE) * 10) / 10 };
+  } catch {
+    return null;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export const requestHash = (parts: string[]) => createHash("sha256").update(parts.join("\u0001")).digest("hex").slice(0, 32);
 
 export { readFile };
