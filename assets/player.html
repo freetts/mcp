@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeTTS player</title>
-<meta name="freetts-player" content="2.2">
+<meta name="freetts-player" content="2.3">
 <style>
 :root{
   --bg:#ffffff;--sheen:#f3faf6;--ink:#0d1512;--ink2:#4f5d57;--muted:#7a8781;--line:#e4ebe7;
@@ -155,7 +155,8 @@ button{font:inherit;color:inherit}
       var q="v=2.2&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
         +"&oa="+encodeURIComponent(keys.slice(0,40).join(","))+"&dm="+encodeURIComponent(String(o.displayMode||""))+"&mh="+encodeURIComponent(String(o.maxHeight||""))
         +"&ih="+window.innerHeight+"&ch="+(c?Math.round(c.getBoundingClientRect().height):0)+"&ua="+encodeURIComponent(navigator.userAgent.slice(0,60));
-      var img=new Image();img.src="https://mcp.freetts.org/diag.gif?"+q;
+      var img=new Image();img.src="https://mcp.freetts.org/diag.gif?"+q+"&via=img";
+      try{var au2=new Audio();au2.preload="metadata";au2.src="https://mcp.freetts.org/diag.gif?"+q+"&via=media";au2.load()}catch(e2){}
     }catch(e){}
   }
   setTimeout(beacon,4000);
@@ -199,6 +200,7 @@ button{font:inherit;color:inherit}
 
   // ── state ───────────────────────────────────────────────────────────────
   function show(sc,raw){
+    if(sc&&typeof sc.text==="string"&&sc.text&&!input){input={text:sc.text,speed:sc.speed,format:sc.format};}
     if(!sc||!sc.url){
       var t=raw&&raw.content&&raw.content[0]&&raw.content[0].text;
       if(t){$("loading").hidden=false;$("loading").querySelector(".bars").style.display="none";$("loadingText").textContent=t}

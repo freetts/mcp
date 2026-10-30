@@ -297,6 +297,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
         // For the in-chat player: display name, language, voice tier, the real
         // waveform, and other voices for this language that this caller can use.
         voice_name: voiceShortName(usedVoice), language: langOf(usedVoice), tier: tierLabel(usedVoice),
+        // The text itself, for the player's voice chips: ChatGPT hands the
+        // player structuredContent but not the tool input. Short texts only.
+        ...(chars <= 3000 ? { text: a.text, ...(a.speed ? { speed: a.speed } : {}) } : {}),
         peaks: wave?.peaks ?? null,
         alternatives: pickAlternatives(all, usedVoice, !isAnon && caller.plan !== "free"),
       } };
