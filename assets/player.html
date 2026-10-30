@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeTTS player</title>
-<meta name="freetts-player" content="2.1">
+<meta name="freetts-player" content="2.2">
 <style>
 :root{
   --bg:#ffffff;--sheen:#f3faf6;--ink:#0d1512;--ink2:#4f5d57;--muted:#7a8781;--line:#e4ebe7;
@@ -138,14 +138,27 @@ button{font:inherit;color:inherit}
     if(ev.source!==window.parent)return;
     var m=ev.data;if(!m||typeof m!=="object")return;
     if(m.id!=null&&pend[m.id]&&("result" in m||"error" in m)){var p=pend[m.id];delete pend[m.id];m.error?p.rej(m.error):p.res(m.result);return}
-    if(m.method==="ui/notifications/tool-input"&&m.params){input=m.params.arguments||input;renderAlts()}
-    else if(m.method==="ui/notifications/tool-result"&&m.params){takeMeta(m.params._meta);show(m.params.structuredContent,m.params)}
+    if(m.method==="ui/notifications/tool-input"&&m.params){gotTI=true;input=m.params.arguments||input;renderAlts()}
+    else if(m.method==="ui/notifications/tool-result"&&m.params){gotTR=true;if(m.params._meta)gotMeta=true;takeMeta(m.params._meta);show(m.params.structuredContent,m.params)}
     else if(m.method==="ui/notifications/host-context-changed"&&m.params){theme(m.params.theme)}
   });
   function theme(t){if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}
   // The text we rendered rides in the result's _meta too, so the voice chips
   // work even when the host never sends tool-input.
   function takeMeta(meta){var fi=meta&&meta["freetts/input"];if(fi&&typeof fi.text==="string"&&!input){input=fi;renderAlts()}}
+  var gotTI=false,gotMeta=false,gotTR=false,sent=false;
+  function beacon(){
+    if(sent)return;sent=true;
+    try{
+      var o=window.openai||{};var keys=[];for(var k in o){keys.push(k)}
+      var c=document.getElementById("card");
+      var q="v=2.2&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
+        +"&oa="+encodeURIComponent(keys.slice(0,40).join(","))+"&dm="+encodeURIComponent(String(o.displayMode||""))+"&mh="+encodeURIComponent(String(o.maxHeight||""))
+        +"&ih="+window.innerHeight+"&ch="+(c?Math.round(c.getBoundingClientRect().height):0)+"&ua="+encodeURIComponent(navigator.userAgent.slice(0,60));
+      var img=new Image();img.src="https://mcp.freetts.org/diag.gif?"+q;
+    }catch(e){}
+  }
+  setTimeout(beacon,4000);
   if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)theme("dark");
   rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"FreeTTS player",version:"1.1.0"},clientInfo:{name:"FreeTTS player",version:"1.1.0"},appCapabilities:{},capabilities:{}})
     .then(function(r){if(r&&r.hostContext)theme(r.hostContext.theme);notify("ui/notifications/initialized",{})})
@@ -153,8 +166,8 @@ button{font:inherit;color:inherit}
   function fromOpenAI(){
     oa=window.openai||oa;if(!oa)return;
     if(oa.theme)theme(oa.theme);
-    if(oa.toolInput&&typeof oa.toolInput.text==="string"&&!input){input=oa.toolInput;renderAlts()}
-    if(oa.toolResponseMetadata)takeMeta(oa.toolResponseMetadata);
+    if(oa.toolInput&&typeof oa.toolInput.text==="string"){gotTI=true;if(!input){input=oa.toolInput;renderAlts()}}
+    if(oa.toolResponseMetadata){gotMeta=true;takeMeta(oa.toolResponseMetadata)}
     if(oa.toolOutput&&!state)show(oa.toolOutput,null);
   }
   window.addEventListener("openai:set_globals",fromOpenAI);

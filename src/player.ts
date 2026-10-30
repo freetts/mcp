@@ -14,7 +14,9 @@ import { isFreeVoice, tierLabel, type Voice } from "./freetts.js";
 import { PLAYER_HTML } from "./playerHtml.js";
 
 /** Bump the version in the URI whenever the HTML changes: hosts cache by URI. */
-export const PLAYER_URI = "ui://freetts/player-v2.html";
+export const PLAYER_URI = "ui://freetts/player-v3.html";
+/** Earlier address, still answered: a host that cached the old link keeps a working player. */
+export const PLAYER_URI_OLD = "ui://freetts/player-v2.html";
 export const PLAYER_MIME = "text/html;profile=mcp-app";
 
 /** Short display name: "en-US-JennyNeural" -> "Jenny", "de-DE-Florian:DragonHDLatestNeural" -> "Florian". */
@@ -55,7 +57,11 @@ export function pickAlternatives(all: Voice[], chosen: Voice, canUsePaid: boolea
 
 export function registerPlayer(server: McpServer): void {
   const audioHosts = [CONFIG.publicUrl, CONFIG.siteUrl];
-  server.registerResource("player", PLAYER_URI, {
+  for (const [name, uri] of [["player", PLAYER_URI], ["player-v2", PLAYER_URI_OLD]] as const) registerPlayerAt(server, name, uri, audioHosts);
+}
+
+function registerPlayerAt(server: McpServer, name: string, PLAYER_URI: string, audioHosts: string[]): void {
+  server.registerResource(name, PLAYER_URI, {
     title: "FreeTTS audio player",
     description: "Plays the audio text_to_speech made, with speed, download and other voices for the same text.",
     mimeType: PLAYER_MIME,

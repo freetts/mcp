@@ -43,6 +43,16 @@ app.get("/privacy", (_q, res) => { res.setHeader("Cache-Control", "public, max-a
 app.get("/robots.txt", (_q, res) => res.type("text/plain").send(["User-agent: *", "Allow: /privacy", "Disallow: /", ""].join(String.fromCharCode(10))));
 app.get(["/health", "/mcp/health"], (_q, res) => res.json({ ok: true, name: pkg.name, version: pkg.version, mcp: RESOURCE }));
 
+// One pixel the in-chat player loads once per view, carrying what its host gave
+// it (tool input yes/no, result _meta yes/no, globals, sizes). Logged, no content.
+const GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+app.get("/diag.gif", (req: Request, res: Response) => {
+  const q: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.query)) q[k.slice(0, 16)] = String(v).slice(0, 200);
+  logLine({ ev: "widget", ...q, ip: (req.headers["cf-connecting-ip"] as string || req.ip || "").toString().slice(0, 48) });
+  res.setHeader("Cache-Control", "no-store"); res.setHeader("Content-Type", "image/gif"); res.end(GIF);
+});
+
 // Free-tier audio, one hour
 app.get("/audio/:file", (req: Request, res: Response) => {
   const p = storedPath(String(req.params.file).replace(/\.mp3$/, ""));
