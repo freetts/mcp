@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CONFIG } from "./config.js";
 import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, byLanguage, findVoice, type Voice } from "./freetts.js";
 import { safeFetch, FetchRefused, audioFileName } from "./safefetch.js";
-import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform } from "./audio.js";
+import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform, rememberInput, recallInput } from "./audio.js";
 import { PLAYER_TOOL_META, pickAlternatives, voiceShortName } from "./player.js";
 import { store, today } from "./store.js";
 import { recordScript, steadyVoiceId } from "./script/record.js";
@@ -213,7 +213,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
     title: "Text to speech (FreeTTS)",
     description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS PRO key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
     inputSchema: {
-      text: z.string().min(1).max(30000).describe("The text to read. Plain text; SSML is not needed."),
+      text: z.string().max(30000).optional().describe("The text to read. Plain text; SSML is not needed. Required unless rerender_of is given."),
+      rerender_of: z.string().max(400).optional().describe("Read the same words as an earlier result again, in another voice or speed: the audio link (or id) that result returned, from the last 24 hours. The text is then not needed."),
       voice: z.string().optional().describe("A FreeTTS voice id from list_voices, like en-US-JennyNeural (a short name like 'Jenny' also works). If empty, a good standard voice for the language is chosen."),
       language: z.string().optional().describe("Language of the text when no voice is given, like 'German' or 'pt-BR'."),
       speed: z.number().int().min(-30).max(30).optional().describe("Percent slower (negative) or faster (positive). Default 0."),
@@ -223,9 +224,19 @@ export function registerTools(server: McpServer, caller: Caller): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     // The in-chat player (MCP Apps): hosts that render it show the audio under the answer.
     _meta: PLAYER_TOOL_META,
-  }, async (a) => {
+  }, async (a0) => {
+    // Same words as an earlier result: the text and settings come from what
+    // that result was made with (kept for a day), unless given again here.
+    const a = { ...a0 } as typeof a0 & { text: string };
+    if (!(a.text || "").trim() && a.rerender_of) {
+      const prev = await recallInput(a.rerender_of);
+      if (!prev) return fail("That earlier audio is older than a day or not from this server, so its words are gone. Send the text again.");
+      a.text = prev.text;
+      if (a.speed == null && prev.speed != null) a.speed = prev.speed;
+      if (!a.format && (prev.format === "mp3" || prev.format === "wav")) a.format = prev.format;
+    }
+    if (!(a.text || "").trim()) return fail("The text is empty. Give the words to read.");
     const chars = a.text.length;
-    if (!a.text.trim()) return fail("The text is empty. Give the words to read.");
     let voice = (a.voice || "").trim();
     const all = await voices();
     let v = voice ? findVoice(all, voice, a.language) : undefined;
@@ -304,6 +315,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
         alternatives: pickAlternatives(all, usedVoice, !isAnon && caller.plan !== "free"),
       } };
       recent.set(hk, { at: Date.now(), result });
+      void rememberInput(url, { text: a.text, ...(a.speed ? { speed: a.speed } : {}), format: fmt });
       return result;
     } catch (e) { refund?.(); return fail(apiErrorText(e, caller)); }
   });

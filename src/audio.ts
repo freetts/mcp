@@ -1,7 +1,7 @@
 // Free audio for callers without an account: the spoken FreeTTS watermark is
 // added, the file is kept under mcp.freetts.org/audio/ for one hour, then removed.
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, readdir, stat, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash, randomUUID } from "node:crypto";
@@ -45,6 +45,7 @@ export async function durationSeconds(path: string): Promise<number | null> {
 
 /** Files older than the free retention are removed once a minute. */
 export function startAudioReaper(): void {
+  startInputReaper();
   const sweep = async () => {
     try {
       for (const f of await readdir(AUDIO_DIR)) {
@@ -91,5 +92,54 @@ export async function waveform(mp3: Buffer, bars = 72): Promise<{ peaks: number[
 }
 
 export const requestHash = (parts: string[]) => createHash("sha256").update(parts.join("\u0001")).digest("hex").slice(0, 32);
+
+// ── what each audio was made from ──────────────────────────────────────────
+// The in-chat player offers other voices for the same words. Some hosts hand
+// the player the result but not the text, so the words behind every audio id
+// are kept here for a day: one small JSON file per id under <state>/inputs.
+export interface AudioInput { text: string; speed?: number; format?: string; at: number }
+const INPUT_DIR = join(CONFIG.stateDir, "inputs");
+const INPUT_KEEP_MS = 24 * 3600 * 1000;
+const inputs = new Map<string, AudioInput>();
+const idOf = (s: string) => (String(s || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) || [""])[0].toLowerCase();
+
+export async function rememberInput(urlOrId: string, input: Omit<AudioInput, "at">): Promise<void> {
+  const id = idOf(urlOrId);
+  if (!id) return;
+  const rec: AudioInput = { ...input, at: Date.now() };
+  inputs.set(id, rec);
+  try { await mkdir(INPUT_DIR, { recursive: true }); await writeFile(join(INPUT_DIR, `${id}.json`), JSON.stringify(rec)); } catch { /* memory copy still serves */ }
+}
+
+/** The words behind an audio link or id made in the last day, or null. */
+export async function recallInput(urlOrId: string): Promise<AudioInput | null> {
+  const id = idOf(urlOrId);
+  if (!id) return null;
+  const hit = inputs.get(id);
+  if (hit) return Date.now() - hit.at <= INPUT_KEEP_MS ? hit : null;
+  try {
+    const rec = JSON.parse(await readFile(join(INPUT_DIR, `${id}.json`), "utf8")) as AudioInput;
+    if (!rec || typeof rec.text !== "string" || Date.now() - rec.at > INPUT_KEEP_MS) return null;
+    inputs.set(id, rec);
+    return rec;
+  } catch { return null; }
+}
+
+/** Inputs older than a day are dropped hourly (memory and files). */
+export function startInputReaper(): void {
+  const sweep = async () => {
+    const cut = Date.now() - INPUT_KEEP_MS;
+    for (const [k, v] of inputs) if (v.at < cut) inputs.delete(k);
+    try {
+      for (const f of await readdir(INPUT_DIR)) {
+        const p = join(INPUT_DIR, f);
+        const s = await stat(p).catch(() => null);
+        if (s && s.mtimeMs < cut) await unlink(p).catch(() => {});
+      }
+    } catch { /* no dir yet */ }
+  };
+  setInterval(sweep, 3_600_000).unref();
+  void sweep();
+}
 
 export { readFile };

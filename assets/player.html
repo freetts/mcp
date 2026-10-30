@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeTTS player</title>
-<meta name="freetts-player" content="2.3">
+<meta name="freetts-player" content="2.4">
 <style>
 :root{
   --bg:#ffffff;--sheen:#f3faf6;--ink:#0d1512;--ink2:#4f5d57;--muted:#7a8781;--line:#e4ebe7;
@@ -74,6 +74,8 @@ button{font:inherit;color:inherit}
 .loading .bars i:nth-child(2){animation-delay:.15s}.loading .bars i:nth-child(3){animation-delay:.3s}.loading .bars i:nth-child(4){animation-delay:.45s}
 @keyframes eq{0%,100%{height:6px;opacity:.6}50%{height:22px;opacity:1}}
 .brand{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:.75}
+.dbg{font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);opacity:.7;word-break:break-all}
+.dbg:empty{display:none}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wave:focus-visible{outline:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -115,6 +117,7 @@ button{font:inherit;color:inherit}
   </div>
   <div class="alts" id="alts" hidden><span class="alts-l">Hear it in</span></div>
   <div class="msg" id="msg" aria-live="polite"></div>
+  <div class="dbg" id="dbg" aria-hidden="true"></div>
 </div>
 <audio id="au" preload="metadata"></audio>
 <script>
@@ -147,21 +150,37 @@ button{font:inherit;color:inherit}
   // work even when the host never sends tool-input.
   function takeMeta(meta){var fi=meta&&meta["freetts/input"];if(fi&&typeof fi.text==="string"&&!input){input=fi;renderAlts()}}
   var gotTI=false,gotMeta=false,gotTR=false,sent=false;
+  var q="";
   function beacon(){
     if(sent)return;sent=true;
     try{
       var o=window.openai||{};var keys=[];for(var k in o){keys.push(k)}
       var c=document.getElementById("card");
-      var q="v=2.2&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
+      q="v=2.4&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
         +"&oa="+encodeURIComponent(keys.slice(0,40).join(","))+"&dm="+encodeURIComponent(String(o.displayMode||""))+"&mh="+encodeURIComponent(String(o.maxHeight||""))
         +"&ih="+window.innerHeight+"&ch="+(c?Math.round(c.getBoundingClientRect().height):0)+"&ua="+encodeURIComponent(navigator.userAgent.slice(0,60));
-      var img=new Image();img.src="https://mcp.freetts.org/diag.gif?"+q+"&via=img";
-      try{var au2=new Audio();au2.preload="metadata";au2.src="https://mcp.freetts.org/diag.gif?"+q+"&via=media";au2.load()}catch(e2){}
+      window.__diag=q;
+      var img=new Image();img.src="https://mcp.freetts.org/diag.gif?"+q+"&via=img";window.__img=img;
+      try{var au2=new Audio();au2.preload="metadata";au2.src="https://mcp.freetts.org/diag.gif?"+q+"&via=media";au2.load();window.__au2=au2}catch(e2){}
+      try{if(navigator.sendBeacon)navigator.sendBeacon("https://mcp.freetts.org/diag.gif?"+q+"&via=beacon")}catch(e3){}
+      try{fetch("https://mcp.freetts.org/diag.gif?"+q+"&via=fetch",{mode:"no-cors",keepalive:true,cache:"no-store"}).catch(function(){})}catch(e4){}
     }catch(e){}
   }
   setTimeout(beacon,4000);
+  // Shown only when something is off: no result after a while, or a result
+  // the chips cannot work with. A normal view never shows it.
+  function diag(){
+    try{
+      var bad=!state||!(state.alternatives instanceof Array);
+      if(!bad){$("dbg").textContent="";return}
+      var o=window.openai||{};var keys=[];for(var k in o){keys.push(k)}
+      $("dbg").textContent="player 2.4 · tool-input "+(gotTI?"yes":"no")+" · result "+(gotTR?"yes":"no")+" · result meta "+(gotMeta?"yes":"no")+" · state "+(state?Object.keys(state).join(","):"none")+" · globals "+(keys.length?keys.slice(0,12).join(","):"none");
+      size();
+    }catch(e){}
+  }
+  setTimeout(diag,6000);
   if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)theme("dark");
-  rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"FreeTTS player",version:"1.1.0"},clientInfo:{name:"FreeTTS player",version:"1.1.0"},appCapabilities:{},capabilities:{}})
+  rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"FreeTTS player",version:"1.1.4"},clientInfo:{name:"FreeTTS player",version:"1.1.4"},appCapabilities:{},capabilities:{}})
     .then(function(r){if(r&&r.hostContext)theme(r.hostContext.theme);notify("ui/notifications/initialized",{})})
     .catch(function(){});
   function fromOpenAI(){
@@ -225,7 +244,7 @@ button{font:inherit;color:inherit}
     while(box.children.length>1)box.removeChild(box.lastChild);
     var list=(state&&state.alternatives)||[];
     var text=input&&typeof input.text==="string"?input.text:"";
-    if(!list.length||!text){box.hidden=true;size();return}
+    if(!list.length||!(text||(state&&state.url))){box.hidden=true;size();return}
     list.forEach(function(a){
       var b=document.createElement("button");b.type="button";b.className="chip";
       var av=document.createElement("span");av.className="av";paintAvatar(av,a.name);b.appendChild(av);
@@ -239,14 +258,20 @@ button{font:inherit;color:inherit}
     box.hidden=false;size();
   }
   function switchVoice(a,btn,av){
-    if(busy||!input)return;
+    if(busy||!(input||(state&&state.url)))return;
     busy=true;msg("");
     var chips=document.querySelectorAll(".chip");for(var i=0;i<chips.length;i++)chips[i].disabled=true;
     btn.classList.add("busy");
     var sp=document.createElement("span");sp.className="spin";av.replaceWith(sp);
-    var args={text:input.text,voice:a.id};
-    if(input.speed!=null)args.speed=input.speed;
-    if(input.format)args.format=input.format;
+    var args={voice:a.id};
+    if(input&&typeof input.text==="string"&&input.text){
+      args.text=input.text;
+      if(input.speed!=null)args.speed=input.speed;
+      if(input.format)args.format=input.format;
+    }else{
+      // The host passed no text: the server keeps the words behind each audio link for a day.
+      args.rerender_of=state.url;
+    }
     callTool("text_to_speech",args).then(function(r){
       var sc=r&&(r.structuredContent||(r.result&&r.result.structuredContent));
       if((r&&r.isError)||!sc||!sc.url){var t=r&&r.content&&r.content[0]&&r.content[0].text;msg(t||"That voice did not render. Try another one.",true);return}
