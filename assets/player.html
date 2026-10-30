@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeTTS player</title>
+<meta name="freetts-player" content="2.1">
 <style>
 :root{
   --bg:#ffffff;--sheen:#f3faf6;--ink:#0d1512;--ink2:#4f5d57;--muted:#7a8781;--line:#e4ebe7;
@@ -138,10 +139,13 @@ button{font:inherit;color:inherit}
     var m=ev.data;if(!m||typeof m!=="object")return;
     if(m.id!=null&&pend[m.id]&&("result" in m||"error" in m)){var p=pend[m.id];delete pend[m.id];m.error?p.rej(m.error):p.res(m.result);return}
     if(m.method==="ui/notifications/tool-input"&&m.params){input=m.params.arguments||input;renderAlts()}
-    else if(m.method==="ui/notifications/tool-result"&&m.params){show(m.params.structuredContent,m.params)}
+    else if(m.method==="ui/notifications/tool-result"&&m.params){takeMeta(m.params._meta);show(m.params.structuredContent,m.params)}
     else if(m.method==="ui/notifications/host-context-changed"&&m.params){theme(m.params.theme)}
   });
   function theme(t){if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}
+  // The text we rendered rides in the result's _meta too, so the voice chips
+  // work even when the host never sends tool-input.
+  function takeMeta(meta){var fi=meta&&meta["freetts/input"];if(fi&&typeof fi.text==="string"&&!input){input=fi;renderAlts()}}
   if(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)theme("dark");
   rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"FreeTTS player",version:"1.1.0"},clientInfo:{name:"FreeTTS player",version:"1.1.0"},appCapabilities:{},capabilities:{}})
     .then(function(r){if(r&&r.hostContext)theme(r.hostContext.theme);notify("ui/notifications/initialized",{})})
@@ -149,7 +153,8 @@ button{font:inherit;color:inherit}
   function fromOpenAI(){
     oa=window.openai||oa;if(!oa)return;
     if(oa.theme)theme(oa.theme);
-    if(oa.toolInput&&!input){input=oa.toolInput}
+    if(oa.toolInput&&typeof oa.toolInput.text==="string"&&!input){input=oa.toolInput;renderAlts()}
+    if(oa.toolResponseMetadata)takeMeta(oa.toolResponseMetadata);
     if(oa.toolOutput&&!state)show(oa.toolOutput,null);
   }
   window.addEventListener("openai:set_globals",fromOpenAI);
@@ -163,8 +168,8 @@ button{font:inherit;color:inherit}
     rpc("ui/open-link",{url:url}).catch(function(){try{window.open(url,"_blank","noopener")}catch(e){}});
   }
   var lastH=0;
-  function size(){var h=Math.ceil(document.documentElement.scrollHeight);if(h!==lastH){lastH=h;notify("ui/notifications/size-changed",{width:Math.ceil(document.documentElement.scrollWidth),height:h})}}
-  if(window.ResizeObserver)new ResizeObserver(size).observe(document.body);
+  function size(){var c=document.getElementById("card");var h=Math.ceil(c?c.getBoundingClientRect().height:document.body.scrollHeight);if(h&&h!==lastH){lastH=h;notify("ui/notifications/size-changed",{width:Math.ceil(document.documentElement.clientWidth||c.getBoundingClientRect().width),height:h});if(oa&&typeof oa.notifyIntrinsicHeight==="function"){try{oa.notifyIntrinsicHeight(h)}catch(e){}}}}
+  if(window.ResizeObserver)new ResizeObserver(size).observe(document.getElementById("card"));
 
   // ── look ────────────────────────────────────────────────────────────────
   function hue(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h%360}

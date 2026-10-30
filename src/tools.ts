@@ -287,7 +287,12 @@ export function registerTools(server: McpServer, caller: Caller): void {
         if (bytes.length <= 4_000_000) content.push({ type: "audio", data: bytes.toString("base64"), mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg" });
         else content.push({ type: "text", text: "The audio is over 4 MB, so only the link is returned." });
       }
-      const result: CallToolResult = { content, structuredContent: {
+      const result: CallToolResult = { content,
+        // For the in-chat player only (hidden from the model): the text and
+        // settings, so the voice chips can re-render it even when the host
+        // never delivers tool-input.
+        _meta: { "freetts/input": { text: a.text.slice(0, 30000), ...(a.speed ? { speed: a.speed } : {}), format: fmt } },
+        structuredContent: {
         url, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon,
         // For the in-chat player: display name, language, voice tier, the real
         // waveform, and other voices for this language that this caller can use.
