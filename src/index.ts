@@ -14,7 +14,7 @@ import { mountOAuth, keyFromAccessToken, wwwAuthenticate } from "./oauth.js";
 import { PROTECTED_TOOLS, platformSpent, type Caller } from "./tools.js";
 import { createServer } from "./server.js";
 import { overLimit, platformOf } from "./limits.js";
-import { usage } from "./freetts.js";
+import { usage, ApiError } from "./freetts.js";
 import pkg from "../package.json" with { type: "json" };
 
 loadStore();
@@ -65,10 +65,32 @@ app.get("/audio/:file", (req: Request, res: Response) => {
 const clientIp = (req: Request) => (req.headers["cf-connecting-ip"] as string || "").trim() || (req.headers["x-real-ip"] as string || "").trim() || (req.ip || "0.0.0.0").replace(/^::ffff:/, "");
 
 const keyPlans = new Map<string, { plan: string; at: number }>();
-async function planForKey(key: string): Promise<string | null> {
+const planLookups = new Map<string, Promise<string | null | undefined>>();
+/** The key's plan from the FreeTTS API: the plan, null when the key is not accepted, undefined when the API could not answer. One lookup per key at a time. */
+function lookupPlan(key: string): Promise<string | null | undefined> {
+  let p = planLookups.get(key);
+  if (!p) {
+    p = usage(key).then(
+      (u) => { keyPlans.set(key, { plan: u.plan, at: Date.now() }); return u.plan; },
+      (e) => { if (e instanceof ApiError && e.status === 401) { keyPlans.delete(key); return null; } return undefined; },
+    ).finally(() => planLookups.delete(key));
+    planLookups.set(key, p);
+  }
+  return p;
+}
+// A key's plan is looked up again once it is 30 seconds old, so an upgrade or a
+// cancel counts at once. A paid plan answers straight away and is refreshed
+// behind the request; a free one (or none known) is checked first, so the very
+// next request after an upgrade has the new plan. If the API cannot answer, the
+// last known plan is used. `hint` is the plan an access token was issued with.
+const PLAN_FRESH_MS = 30_000;
+async function planForKey(key: string, hint?: string): Promise<string | null> {
   const c = keyPlans.get(key);
-  if (c && Date.now() - c.at < 300_000) return c.plan;
-  try { const u = await usage(key); keyPlans.set(key, { plan: u.plan, at: Date.now() }); return u.plan; } catch { return null; }
+  if (c && Date.now() - c.at < PLAN_FRESH_MS) return c.plan;
+  const known = c?.plan ?? hint;
+  if (known && known !== "free") { void lookupPlan(key); return known; }
+  const got = await lookupPlan(key);
+  return got === undefined ? known ?? null : got;
 }
 
 /** Who is calling: an API key (header or bearer), a token we issued, or nobody. */
@@ -84,7 +106,8 @@ async function resolveCaller(req: Request): Promise<{ caller: Caller; badToken: 
     if (/^ft_live_/.test(tok)) key = tok;
     else if (tok) {
       const k = await keyFromAccessToken(tok);
-      if (k) return { caller: { kind: "key", apiKey: k.apiKey, plan: k.plan, ip, userAgent: ua, platform }, badToken: false };
+      // The plan inside the token is from when it was issued, up to an hour ago: the key's current plan wins.
+      if (k) return { caller: { kind: "key", apiKey: k.apiKey, plan: (await planForKey(k.apiKey, k.plan)) ?? k.plan, ip, userAgent: ua, platform }, badToken: false };
       badToken = true;
     }
   }

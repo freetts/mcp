@@ -120,8 +120,22 @@ function anonReserve(caller: Caller, chars: number): () => void {
 }
 
 // Same text, same voice, within a few minutes: the same file, no new synthesis.
-const recent = new Map<string, { at: number; result: CallToolResult }>();
+// Kept with where the file's bytes are, so a repeat that asks for them (include_audio) gets them too.
+interface Recent { at: number; result: CallToolResult; fileId: string; localId: string | null; fmt: string }
+const recent = new Map<string, Recent>();
 setInterval(() => { const cut = Date.now() - 600_000; for (const [k, v] of recent) if (v.at < cut) recent.delete(k); }, 60_000).unref();
+
+/** The result with the audio bytes added, for a caller that asks for them (include_audio). */
+async function withAudio(result: CallToolResult, src: Pick<Recent, "fileId" | "localId" | "fmt">): Promise<CallToolResult> {
+  let extra: CallToolResult["content"][number];
+  try {
+    const bytes = src.localId ? await readFile(storedPath(src.localId)!) : await download(src.fileId);
+    extra = bytes.length <= 4_000_000
+      ? { type: "audio", data: bytes.toString("base64"), mimeType: src.fmt === "wav" ? "audio/wav" : "audio/mpeg" }
+      : { type: "text", text: "The audio is over 4 MB, so only the link is returned." };
+  } catch { extra = { type: "text", text: "The audio bytes could not be added just now; the link above works." }; }
+  return { ...result, content: [...result.content, extra] };
+}
 
 const langOf = (v: Voice) => v.LocaleName || v.Locale;
 const voiceLine = (v: Voice) => `${v.ShortName} (${v.FriendlyName || v.ShortName.split("-").slice(2).join("-").replace(/Neural$/, "")}, ${v.Gender}, ${langOf(v)}, ${tierLabel(v)}${isFreeVoice(v) ? ", free" : ", PRO"})`;
@@ -261,7 +275,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const rate = a.speed ? `${a.speed > 0 ? "+" : ""}${a.speed}%` : undefined;
     const hk = requestHash([caller.kind, caller.kind === "key" ? caller.apiKey! : meterKey(caller), a.text, voice, fmt, rate || ""]);
     const cached = recent.get(hk);
-    if (cached) return cached.result;
+    if (cached) return a.include_audio ? withAudio(cached.result, cached) : cached.result;
     let refund: (() => void) | null = null;
     if (isAnon) {
       const why = anonCheck(caller, chars);
@@ -293,11 +307,6 @@ export function registerTools(server: McpServer, caller: Caller): void {
         { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
         { type: "resource_link", uri: url, name: `freetts-${(r.voice || voice).replace(/[^A-Za-z0-9]+/g, "-")}.${fmt}`, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
       ];
-      if (a.include_audio) {
-        const bytes = localId ? await readFile(storedPath(localId)!) : await download(r.file_id);
-        if (bytes.length <= 4_000_000) content.push({ type: "audio", data: bytes.toString("base64"), mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg" });
-        else content.push({ type: "text", text: "The audio is over 4 MB, so only the link is returned." });
-      }
       const result: CallToolResult = { content,
         // For the in-chat player only (hidden from the model): the text and
         // settings, so the voice chips can re-render it even when the host
@@ -314,9 +323,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
         peaks: wave?.peaks ?? null,
         alternatives: pickAlternatives(all, usedVoice, !isAnon && caller.plan !== "free"),
       } };
-      recent.set(hk, { at: Date.now(), result });
+      recent.set(hk, { at: Date.now(), result, fileId: r.file_id, localId, fmt });
       void rememberInput(url, { text: a.text, ...(a.speed ? { speed: a.speed } : {}), format: fmt });
-      return result;
+      return a.include_audio ? await withAudio(result, { fileId: r.file_id, localId, fmt }) : result;
     } catch (e) { refund?.(); return fail(apiErrorText(e, caller)); }
   });
 

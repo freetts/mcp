@@ -5,6 +5,7 @@ import { CONFIG } from "./config.js";
 import { registerTools, type Caller } from "./tools.js";
 import { registerExtras } from "./extras.js";
 import { registerPlayer } from "./player.js";
+import { registerAudioRead } from "./audioRead.js";
 import pkg from "../package.json" with { type: "json" };
 
 export const VERSION: string = pkg.version;
@@ -21,5 +22,6 @@ export function createServer(caller: Caller): McpServer {
   registerTools(server, caller);
   registerExtras(server);
   registerPlayer(server);
+  registerAudioRead(server);
   return server;
 }
