@@ -23,6 +23,44 @@ export interface Caller {
   platform?: "claude" | "chatgpt" | null;
 }
 
+// The audio as a file a host can fetch and keep: the shape ChatGPT uses for files passed to and from
+// tools (file_id, download_url, mime_type, file_name). Declared in each tool's outputSchema.
+const FILE_REF = z.object({
+  file_id: z.string().describe("FreeTTS id of the audio."),
+  download_url: z.string().describe("Where the file can be downloaded."),
+  mime_type: z.string().optional().describe("audio/mpeg (MP3) or audio/wav."),
+  file_name: z.string().optional().describe("A name for the file, made from its first words."),
+});
+const TTS_OUTPUT = {
+  url: z.string().describe("Link to the audio."),
+  file: FILE_REF.describe("The same audio as a file."),
+  voice: z.string().optional(),
+  format: z.string().optional(),
+  characters: z.number().optional(),
+  seconds: z.number().nullable().optional(),
+  kept: z.string().optional(),
+  free_tier: z.boolean().optional(),
+  voice_name: z.string().optional(),
+  language: z.string().optional(),
+  tier: z.string().optional(),
+  text: z.string().optional(),
+  speed: z.number().optional(),
+  peaks: z.array(z.number()).nullable().optional(),
+  alternatives: z.array(z.object({ id: z.string(), name: z.string(), tier: z.string(), gender: z.string() })).optional(),
+};
+const DIALOGUE_OUTPUT = {
+  url: z.string().describe("Link to the audio."),
+  file: FILE_REF.describe("The same audio as a file."),
+  lines: z.number(),
+  voices: z.record(z.string(), z.string()),
+};
+/** A file name from the first words: "Hallo! Ich heiße Mia." -> hallo-ich-heisse-mia-7486e6ed.mp3 (the id keeps names apart). */
+export function clipFileName(words: string, id: string, ext: string): string {
+  const slug = words.replace(/ß/g, "ss").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 6).join("-").slice(0, 48).replace(/-+$/, "");
+  return `${slug || "freetts-audio"}-${id.slice(0, 8)}.${ext}`;
+}
+
 /** Tools that need an account. Calls without a token get a 401 before the SDK runs (see index.ts). */
 export const PROTECTED_TOOLS = new Set(["dialogue_to_speech", "script_to_tracks", "transcribe_audio"]);
 
@@ -235,6 +273,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav (FreeTTS PRO)."),
       include_audio: z.boolean().optional().describe("Also return the audio bytes in the result (large). Default false; the link is enough for most clients."),
     },
+    outputSchema: TTS_OUTPUT,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     // The in-chat player (MCP Apps): hosts that render it show the audio under the answer.
     _meta: PLAYER_TOOL_META,
@@ -303,9 +342,12 @@ export function registerTools(server: McpServer, caller: Caller): void {
       } catch { wave = null; }
       const dur = wave?.seconds ?? (localId ? await durationSeconds(storedPath(localId)!) : null);
       const usedVoice = all.find((x) => x.ShortName === r.voice) || v;
+      // The same audio as a file a host can fetch and keep, named from its first words.
+      const fileName = clipFileName(a.text, localId || r.file_id, fmt);
+      const file = { file_id: localId || r.file_id, download_url: url, mime_type: fmt === "wav" ? "audio/wav" : "audio/mpeg", file_name: fileName };
       const content: CallToolResult["content"] = [
         { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
-        { type: "resource_link", uri: url, name: `freetts-${(r.voice || voice).replace(/[^A-Za-z0-9]+/g, "-")}.${fmt}`, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
+        { type: "resource_link", uri: url, name: fileName, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
       ];
       const result: CallToolResult = { content,
         // For the in-chat player only (hidden from the model): the text and
@@ -313,7 +355,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
         // never delivers tool-input.
         _meta: { "freetts/input": { text: a.text.slice(0, 30000), ...(a.speed ? { speed: a.speed } : {}), format: fmt } },
         structuredContent: {
-        url, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon,
+        url, file, voice: r.voice, format: fmt, characters: chars, seconds: dur, kept, free_tier: isAnon,
         // For the in-chat player: display name, language, voice tier, the real
         // waveform, and other voices for this language that this caller can use.
         voice_name: voiceShortName(usedVoice), language: langOf(usedVoice), tier: tierLabel(usedVoice),
@@ -364,6 +406,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       pause_ms: z.number().int().min(0).max(5000).optional().describe("Silence between lines in milliseconds. Default 600."),
       language: z.string().optional().describe("Language of the lines when no voices are given."),
     },
+    outputSchema: DIALOGUE_OUTPUT,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
@@ -404,12 +447,13 @@ export function registerTools(server: McpServer, caller: Caller): void {
         fileId = m.file_id;
       }
       const url = r.audio_url || audioUrl(fileId);
+      const fileName = clipFileName(parsed[0]!.text, fileId, "mp3");
       return {
         content: [
           { type: "text", text: `Dialogue ready: ${url}\n${parsed.length} lines, ${speakers.map((s) => `${s}: ${chosen[s]}`).join("; ")}. ${pause} ms between lines. MP3, kept ${caller.plan === "free" ? "1 hour" : "30 days"}.` },
-          { type: "resource_link", uri: url, name: "freetts-dialogue.mp3", mimeType: "audio/mpeg" },
+          { type: "resource_link", uri: url, name: fileName, mimeType: "audio/mpeg" },
         ],
-        structuredContent: { url, lines: parsed.length, voices: chosen },
+        structuredContent: { url, file: { file_id: fileId, download_url: url, mime_type: "audio/mpeg", file_name: fileName }, lines: parsed.length, voices: chosen },
       };
     } catch (e) { return fail(apiErrorText(e, caller)); }
   });
