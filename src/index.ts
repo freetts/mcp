@@ -9,7 +9,7 @@ import { PRIVACY_HTML } from "./privacy.js";
 import { join } from "node:path";
 import { CONFIG, MCP_PATH, RESOURCE } from "./config.js";
 import { loadStore } from "./store.js";
-import { startAudioReaper, storedPath } from "./audio.js";
+import { startAudioReaper, storedPath, storedZipPath } from "./audio.js";
 import { mountOAuth, keyFromAccessToken, wwwAuthenticate } from "./oauth.js";
 import { PROTECTED_TOOLS, platformSpent, type Caller } from "./tools.js";
 import { createServer } from "./server.js";
@@ -55,7 +55,17 @@ app.get("/diag.gif", (req: Request, res: Response) => {
 
 // Free-tier audio, one hour
 app.get("/audio/:file", (req: Request, res: Response) => {
-  const p = storedPath(String(req.params.file).replace(/\.mp3$/, ""));
+  const name = String(req.params.file);
+  // A ZIP of many clips (batch_text_to_speech), kept a day.
+  if (name.endsWith(".zip")) {
+    const z = storedZipPath(name.replace(/\.zip$/, ""));
+    if (!z) return res.status(404).end();
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="freetts-clips-${name.slice(0, 8)}.zip"`);
+    return res.sendFile(z, (err) => { if (err && !res.headersSent) res.status(404).json({ error: "This ZIP has expired (a ZIP of clips is kept one day). Each clip still works at its own link." }); });
+  }
+  const p = storedPath(name.replace(/\.mp3$/, ""));
   if (!p) return res.status(404).end();
   res.setHeader("Cache-Control", "private, max-age=3600");
   res.setHeader("Content-Type", "audio/mpeg");

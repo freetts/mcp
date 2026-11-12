@@ -33,6 +33,62 @@ export async function watermarkAndStore(mp3: Buffer): Promise<string> {
 export const storedPath = (id: string) => (/^[0-9a-f-]{36}$/.test(id) ? join(AUDIO_DIR, `${id}.mp3`) : null);
 export const publicAudioUrl = (id: string) => `${CONFIG.publicUrl}/audio/${id}.mp3`;
 
+// ── A ZIP of many clips (batch_text_to_speech, 1.3.0) ─────────────────────
+// Kept a day at mcp.freetts.org/audio/<id>.zip. The clips themselves stay on
+// freetts.org for 30 days; the ZIP is one download for all of them.
+export const ZIP_KEEP_MS = 24 * 60 * 60 * 1000;
+export const storedZipPath = (id: string) => (/^[0-9a-f-]{36}$/.test(id) ? join(AUDIO_DIR, `${id}.zip`) : null);
+export const publicZipUrl = (id: string) => `${CONFIG.publicUrl}/audio/${id}.zip`;
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** A ZIP of the files, stored without compression (MP3 and WAV do not shrink). UTF-8 names. */
+export function zipFiles(files: { name: string; data: Buffer }[]): Buffer {
+  const parts: Buffer[] = []; const central: Buffer[] = [];
+  const now = new Date();
+  const time = (now.getHours() << 11) | (now.getMinutes() << 5) | Math.floor(now.getSeconds() / 2);
+  const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  let offset = 0;
+  for (const f of files) {
+    const name = Buffer.from(f.name, "utf8");
+    const crc = crc32(f.data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6); local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(time, 10); local.writeUInt16LE(date, 12); local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(f.data.length, 18); local.writeUInt32LE(f.data.length, 22); local.writeUInt16LE(name.length, 26); local.writeUInt16LE(0, 28);
+    parts.push(local, name, f.data);
+    const c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8); c.writeUInt16LE(0, 10);
+    c.writeUInt16LE(time, 12); c.writeUInt16LE(date, 14); c.writeUInt32LE(crc, 16);
+    c.writeUInt32LE(f.data.length, 20); c.writeUInt32LE(f.data.length, 24); c.writeUInt16LE(name.length, 28);
+    c.writeUInt32LE(offset, 42);
+    central.push(c, name);
+    offset += 30 + name.length + f.data.length;
+  }
+  const size = central.reduce((n, b) => n + b.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(size, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, ...central, end]);
+}
+
+/** Store a ZIP of the files; returns its public id. */
+export async function storeZip(files: { name: string; data: Buffer }[]): Promise<string> {
+  const id = randomUUID();
+  await mkdir(AUDIO_DIR, { recursive: true });
+  await writeFile(join(AUDIO_DIR, `${id}.zip`), zipFiles(files));
+  return id;
+}
+
 /** Seconds of an MP3, from ffprobe-free arithmetic: ffmpeg prints it; cheaper to read the header via ffmpeg -f null. */
 export async function durationSeconds(path: string): Promise<number | null> {
   return new Promise((res) => execFile(CONFIG.ffmpeg, ["-v", "info", "-i", path, "-f", "null", "-"], { timeout: 60_000 }, (_e, _o, stderr) => {
@@ -51,7 +107,7 @@ export function startAudioReaper(): void {
       for (const f of await readdir(AUDIO_DIR)) {
         const p = join(AUDIO_DIR, f);
         const s = await stat(p).catch(() => null);
-        if (s && Date.now() - s.mtimeMs > CONFIG.anon.keepMs) await unlink(p).catch(() => {});
+        if (s && Date.now() - s.mtimeMs > (f.endsWith(".zip") ? ZIP_KEEP_MS : CONFIG.anon.keepMs)) await unlink(p).catch(() => {});
       }
     } catch { /* next sweep */ }
   };

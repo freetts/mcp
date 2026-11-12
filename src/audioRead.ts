@@ -9,7 +9,7 @@ import { ResourceTemplate, type McpServer } from "@modelcontextprotocol/sdk/serv
 import { McpError, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { readFile, stat } from "node:fs/promises";
 import { CONFIG } from "./config.js";
-import { storedPath } from "./audio.js";
+import { storedPath, storedZipPath } from "./audio.js";
 
 /** The largest file handed over in one read. The largest clip hosts asked for by 2026-11-12 was 9.5 MB. */
 const READ_MAX = Number(process.env.AUDIO_READ_MAX_BYTES) || 10 * 1024 * 1024;
@@ -46,7 +46,18 @@ export function registerAudioRead(server: McpServer): void {
     description: "The MP3 behind a free-tier link from text_to_speech (kept one hour), as a file.",
     mimeType: "audio/mpeg",
   }, async (uri, vars): Promise<ReadResourceResult> => {
-    const m = /^([0-9a-f-]{36})\.mp3$/.exec(String(vars.file || ""));
+    const name = String(vars.file || "");
+    // A ZIP of many clips from batch_text_to_speech, kept a day.
+    const zm = /^([0-9a-f-]{36})\.zip$/.exec(name);
+    if (zm) {
+      const zp = storedZipPath(zm[1]);
+      let zsize = 0;
+      try { zsize = zp ? (await stat(zp)).size : 0; } catch { zsize = 0; }
+      if (!zp || !zsize) throw new McpError(NOT_FOUND, "This ZIP has expired: a ZIP of clips is kept one day. Each clip still works at its own link.");
+      if (zsize > READ_MAX) return tooBig(uri, zsize);
+      return { contents: [{ uri: uri.href, mimeType: "application/zip", blob: (await readFile(zp)).toString("base64") }] };
+    }
+    const m = /^([0-9a-f-]{36})\.mp3$/.exec(name);
     const path = m ? storedPath(m[1]) : null;
     if (!path) throw new McpError(NOT_FOUND, `Resource ${uri.href} not found`);
     let size = 0;

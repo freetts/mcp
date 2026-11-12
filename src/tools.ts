@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CONFIG } from "./config.js";
 import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, byLanguage, findVoice, type Voice } from "./freetts.js";
 import { safeFetch, FetchRefused, audioFileName } from "./safefetch.js";
-import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform, rememberInput, recallInput } from "./audio.js";
+import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform, rememberInput, recallInput, storeZip, publicZipUrl } from "./audio.js";
 import { PLAYER_TOOL_META, pickAlternatives, voiceShortName } from "./player.js";
 import { store, today } from "./store.js";
 import { recordScript, steadyVoiceId } from "./script/record.js";
@@ -54,15 +54,29 @@ const DIALOGUE_OUTPUT = {
   lines: z.number(),
   voices: z.record(z.string(), z.string()),
 };
+const BATCH_OUTPUT = {
+  file: FILE_REF.optional().describe("Every clip in one ZIP, numbered in order."),
+  zip_url: z.string().optional().describe("Link to the ZIP."),
+  clips: z.array(z.object({ index: z.number(), text: z.string(), url: z.string(), file: FILE_REF })).describe("One entry per clip made, in order."),
+  failed: z.array(z.object({ index: z.number(), text: z.string(), reason: z.string() })).describe("Texts that could not be made, and why."),
+  voice: z.string(),
+  format: z.string(),
+  characters: z.number(),
+};
+/** Renders a batch runs at the same time. */
+const BATCH_PARALLEL = 5;
 /** A file name from the first words: "Hallo! Ich heiße Mia." -> hallo-ich-heisse-mia-7486e6ed.mp3 (the id keeps names apart). */
 export function clipFileName(words: string, id: string, ext: string): string {
-  const slug = words.replace(/ß/g, "ss").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  return `${clipSlug(words) || "freetts-audio"}-${id.slice(0, 8)}.${ext}`;
+}
+/** The first six words as a file-name part: "Hallo! Ich heiße Mia." -> hallo-ich-heisse-mia. */
+export function clipSlug(words: string): string {
+  return words.replace(/ß/g, "ss").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
     .replace(/[^a-z0-9]+/g, " ").trim().split(" ").slice(0, 6).join("-").slice(0, 48).replace(/-+$/, "");
-  return `${slug || "freetts-audio"}-${id.slice(0, 8)}.${ext}`;
 }
 
 /** Tools that need an account. Calls without a token get a 401 before the SDK runs (see index.ts). */
-export const PROTECTED_TOOLS = new Set(["dialogue_to_speech", "script_to_tracks", "transcribe_audio"]);
+export const PROTECTED_TOOLS = new Set(["batch_text_to_speech", "dialogue_to_speech", "script_to_tracks", "transcribe_audio"]);
 
 const text = (t: string): CallToolResult => ({ content: [{ type: "text", text: t }] });
 const fail = (t: string): CallToolResult => ({ content: [{ type: "text", text: t }], isError: true });
@@ -369,6 +383,101 @@ export function registerTools(server: McpServer, caller: Caller): void {
       void rememberInput(url, { text: a.text, ...(a.speed ? { speed: a.speed } : {}), format: fmt });
       return a.include_audio ? await withAudio(result, { fileId: r.file_id, localId, fmt }) : result;
     } catch (e) { refund?.(); return fail(apiErrorText(e, caller)); }
+  });
+
+  // ── batch_text_to_speech (account) ────────────────────────────────────
+  // Many short clips in one call (1.3.0). Word lists, flashcards and quiz lines
+  // used to take one call per clip. This makes up to 50 a call, five at a time,
+  // and hands back one ZIP as well as a link per clip.
+  server.registerTool("batch_text_to_speech", {
+    title: "Many short clips at once (FreeTTS)",
+    description: "Make one audio file per text from a list, in one call: vocabulary and flashcards, quiz questions and answers, H5P and other e-learning clips, app or game lines. Up to 50 texts of up to 1,000 characters each, all in one voice. Returns a link per clip and one ZIP with every clip, numbered in order (01-..., 02-...). Use it instead of calling text_to_speech many times. Needs a connected FreeTTS PRO account.",
+    inputSchema: {
+      texts: z.array(z.string().min(1).max(1000)).min(1).max(50).describe("The texts, one clip each, in the order wanted."),
+      voice: z.string().optional().describe("A FreeTTS voice id from list_voices for every clip, like es-ES-ElviraNeural (a short name like 'Elvira' also works). If empty, a good voice for the language is chosen."),
+      language: z.string().optional().describe("Language of the texts when no voice is given, like 'Spanish' or 'fr-FR'."),
+      speed: z.number().int().min(-30).max(30).optional().describe("Percent slower (negative) or faster (positive). Default 0."),
+      format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav."),
+    },
+    outputSchema: BATCH_OUTPUT,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async (a) => {
+    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
+    if (caller.plan === "free") return fail(inChatGPT(caller)
+      ? `Many clips in one call is part of FreeTTS PRO; on this account, text_to_speech makes one clip at a time. ${keysHelp(caller)}`
+      : `Many clips in one call is part of FreeTTS PRO; on the free plan, text_to_speech makes one clip at a time. Plans: ${PRICING}`);
+    const texts = a.texts.map((t) => t.trim());
+    const empty = texts.findIndex((t) => !t);
+    if (empty >= 0) return fail(`Text ${empty + 1} is empty. Give the words for every clip.`);
+    const all = await voices();
+    let voice = (a.voice || "").trim();
+    let v = voice ? findVoice(all, voice, a.language) : undefined;
+    if (voice && !v) return fail(`"${voice}" is not a FreeTTS voice id. Use list_voices to find one (ids look like en-US-JennyNeural or de-DE-Florian:DragonHDLatestNeural).`);
+    if (v && ["ultra", "prime"].includes(v.Tier || "")) return fail(`${v.ShortName} is ${v.Tier === "prime" ? "a Prime" : "an Ultra"} voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
+    if (!v) {
+      const d = await pickDefaultVoice(a.language, false);
+      if (!d) return fail(`No FreeTTS voice for "${a.language}". list_voices with no language shows what exists.`);
+      v = d;
+    }
+    voice = v.ShortName;
+    const fmt = a.format || "mp3";
+    const rate = a.speed ? `${a.speed > 0 ? "+" : ""}${a.speed}%` : undefined;
+    // Five renders at a time, in order. Each is an ordinary API call: counted on
+    // the account, and a repeat of the same text and voice comes back free.
+    const done: { index: number; text: string; fileId: string; url: string }[] = [];
+    const failed: { index: number; text: string; reason: string }[] = [];
+    let stop: string | null = null;
+    let next = 0;
+    const render = async () => {
+      while (next < texts.length) {
+        const i = next++;
+        if (stop) { failed.push({ index: i + 1, text: texts[i].slice(0, 80), reason: stop }); continue; }
+        try {
+          const r = await tts(caller.apiKey!, { text: texts[i], voice, output_format: fmt, ...(rate ? { rate } : {}) });
+          done.push({ index: i + 1, text: texts[i], fileId: r.file_id, url: r.audio_url || audioUrl(r.file_id) });
+        } catch (e) {
+          const reason = apiErrorText(e, caller);
+          // A refused key, a plan wall or the rate limit would refuse the rest the same way.
+          if (e instanceof ApiError && [401, 402, 429].includes(e.status)) stop = reason;
+          failed.push({ index: i + 1, text: texts[i].slice(0, 80), reason });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(BATCH_PARALLEL, texts.length) }, render));
+    done.sort((x, y) => x.index - y.index);
+    failed.sort((x, y) => x.index - y.index);
+    if (!done.length) return fail(failed[0]?.reason || "No clip could be made. Try again.");
+    const width = Math.max(2, String(texts.length).length);
+    const num = (n: number) => String(n).padStart(width, "0");
+    const clipName = (d: { index: number; text: string }) => `${num(d.index)}-${clipSlug(d.text) || "clip"}.${fmt}`;
+    // One ZIP with every clip, numbered in order. Without it the links still work.
+    let zipId = "", zipUrl = "";
+    try {
+      const bytes: (Buffer | null)[] = done.map(() => null);
+      let k = 0;
+      const fetchOne = async () => { while (k < done.length) { const j = k++; try { bytes[j] = await download(done[j].fileId); } catch { bytes[j] = null; } } };
+      await Promise.all(Array.from({ length: Math.min(BATCH_PARALLEL, done.length) }, fetchOne));
+      const files = done.flatMap((d, j) => (bytes[j] ? [{ name: clipName(d), data: bytes[j]! }] : []));
+      if (files.length === done.length) { zipId = await storeZip(files); zipUrl = publicZipUrl(zipId); }
+    } catch { zipId = ""; zipUrl = ""; }
+    const chars = done.reduce((n, d) => n + d.text.length, 0);
+    const mime = fmt === "wav" ? "audio/wav" : "audio/mpeg";
+    const zipName = `freetts-${done.length}-clips-${clipSlug(done[0].text).slice(0, 24) || "audio"}.zip`;
+    const clips = done.map((d) => ({ index: d.index, text: d.text.slice(0, 200), url: d.url,
+      file: { file_id: d.fileId, download_url: d.url, mime_type: mime, file_name: clipName(d) } }));
+    const lines = [
+      `Made ${done.length} of ${texts.length} clips with ${voice}${failed.length ? `; ${failed.length} could not be made (listed below)` : ""}. ${chars.toLocaleString()} characters, ${fmt.toUpperCase()}.`,
+      zipUrl ? `All clips in one ZIP, numbered in order: ${zipUrl} (the ZIP is kept one day).` : "The ZIP could not be made just now; each clip has its own link below.",
+      "Each clip (kept 30 days):",
+      ...clips.map((c) => `${num(c.index)}. ${c.url}  "${c.text.slice(0, 60)}${c.text.length > 60 ? "..." : ""}"`),
+      ...failed.map((f) => `${num(f.index)}. not made: ${f.reason}`),
+    ];
+    const content: CallToolResult["content"] = [{ type: "text", text: lines.join("\n") }];
+    if (zipUrl) content.push({ type: "resource_link", uri: zipUrl, name: zipName, mimeType: "application/zip", description: `${done.length} clips, numbered in order` });
+    return { content, structuredContent: {
+      ...(zipUrl ? { file: { file_id: zipId, download_url: zipUrl, mime_type: "application/zip", file_name: zipName }, zip_url: zipUrl } : {}),
+      clips, failed, voice, format: fmt, characters: chars,
+    } };
   });
 
   // ── check_usage ───────────────────────────────────────────────────────
