@@ -16,7 +16,7 @@ Ask your assistant to read something aloud, and it calls FreeTTS and hands you a
 | `list_voices` | Voices for a language or search word, with ids. | Nothing |
 | `suggest_voice` | Three voices for a language and a use, with reasons. | Nothing |
 | `check_usage` | Plan and characters left. | Nothing |
-| `batch_text_to_speech` | Up to 50 short texts in, one clip each plus a ZIP of all, numbered in order. | FreeTTS PRO |
+| `batch_text_to_speech` | Up to 50 short texts in, one clip each plus a ZIP of all, numbered in order. One voice, or a voice per clip. | FreeTTS PRO |
 | `dialogue_to_speech` | `Name: line` script, a voice per speaker, one file. | FreeTTS PRO |
 | `script_to_tracks` | Script mode: exact `(pause 2)`, `(beep)`, `(ding)`, `TRACK:` files, `CUE:` voice, scenes. | FreeTTS PRO |
 | `transcribe_audio` | A public audio URL in, text out. | FreeTTS PRO |

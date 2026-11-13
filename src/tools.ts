@@ -57,7 +57,8 @@ const DIALOGUE_OUTPUT = {
 const BATCH_OUTPUT = {
   file: FILE_REF.optional().describe("Every clip in one ZIP, numbered in order."),
   zip_url: z.string().optional().describe("Link to the ZIP."),
-  clips: z.array(z.object({ index: z.number(), text: z.string(), url: z.string(), file: FILE_REF })).describe("One entry per clip made, in order."),
+  clips: z.array(z.object({ index: z.number(), text: z.string(), url: z.string(), file: FILE_REF,
+    voice: z.string().optional().describe("The voice of this clip, when the call gave a voice per clip.") })).describe("One entry per clip made, in order."),
   failed: z.array(z.object({ index: z.number(), text: z.string(), reason: z.string() })).describe("Texts that could not be made, and why."),
   voice: z.string(),
   format: z.string(),
@@ -277,7 +278,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // ── text_to_speech ────────────────────────────────────────────────────
   server.registerTool("text_to_speech", {
     title: "Text to speech (FreeTTS)",
-    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS PRO key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days).`,
+    description: `Convert text to spoken audio with a FreeTTS voice and return a download link to the MP3 (or WAV with a FreeTTS PRO key). Use it when the user wants text read aloud, narrated, or saved as an audio file. Without a FreeTTS key: standard voices, up to ${CONFIG.anon.perCallChars.toLocaleString()} characters a call, a short spoken "FreeTTS" tag at the end, file kept one hour. With a key: the account's plan (PRO: HD and Signature voices, no tag, 10,000 characters a call, files kept 30 days). For three or more separate clips on a FreeTTS PRO account (word lists, quiz lines, one file per sentence), call batch_text_to_speech once instead of this tool several times.`,
     inputSchema: {
       text: z.string().max(30000).optional().describe("The text to read. Plain text; SSML is not needed. Required unless rerender_of is given."),
       rerender_of: z.string().max(400).optional().describe("Read the same words as an earlier result again, in another voice or speed: the audio link (or id) that result returned, from the last 24 hours. The text is then not needed."),
@@ -288,7 +289,11 @@ export function registerTools(server: McpServer, caller: Caller): void {
       include_audio: z.boolean().optional().describe("Also return the audio bytes in the result (large). Default false; the link is enough for most clients."),
     },
     outputSchema: TTS_OUTPUT,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    // A write, because the audio is kept and counted on the account. Not open-world:
+    // the tool works inside the caller's own FreeTTS account and reaches no public or
+    // open-ended destination (only transcribe_audio fetches an outside address). The
+    // same holds for the batch, dialogue and script tools below.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     // The in-chat player (MCP Apps): hosts that render it show the audio under the answer.
     _meta: PLAYER_TOOL_META,
   }, async (a0) => {
@@ -359,8 +364,13 @@ export function registerTools(server: McpServer, caller: Caller): void {
       // The same audio as a file a host can fetch and keep, named from its first words.
       const fileName = clipFileName(a.text, localId || r.file_id, fmt);
       const file = { file_id: localId || r.file_id, download_url: url, mime_type: fmt === "wav" ? "audio/wav" : "audio/mpeg", file_name: fileName };
+      // A paid account making a short clip is often making several (word lists, quiz
+      // lines): the answer says that one batch call makes them all. Never for guests
+      // or free keys, where the batch tool would refuse.
+      const more = !isAnon && !!caller.plan && caller.plan !== "free" && !a0.rerender_of && chars <= 300
+        ? "\nSeveral separate clips to make? One batch_text_to_speech call makes up to 50 at once, with a voice per clip if needed." : "";
       const content: CallToolResult["content"] = [
-        { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}` },
+        { type: "text", text: `${note}Audio ready: ${url}\nVoice: ${r.voice}${r.downgraded ? " (the requested Signature voice was over its cap, so a matching standard voice was used)" : ""}. ${chars.toLocaleString()} characters${dur ? `, about ${Math.round(dur)} seconds` : ""}. ${fmt.toUpperCase()}, kept ${kept}.${isAnon ? (inChatGPT(caller) ? " Ends with a short spoken FreeTTS tag." : " Ends with a short spoken FreeTTS tag; a FreeTTS key removes it.") : r.watermark && r.watermark !== "none" ? " Ends with a short spoken FreeTTS tag (free plan)." : ""}${more}` },
         { type: "resource_link", uri: url, name: fileName, mimeType: fmt === "wav" ? "audio/wav" : "audio/mpeg", description: `Spoken audio, ${chars} characters, voice ${r.voice}` },
       ];
       const result: CallToolResult = { content,
@@ -391,16 +401,17 @@ export function registerTools(server: McpServer, caller: Caller): void {
   // and hands back one ZIP as well as a link per clip.
   server.registerTool("batch_text_to_speech", {
     title: "Many short clips at once (FreeTTS)",
-    description: "Make one audio file per text from a list, in one call: vocabulary and flashcards, quiz questions and answers, H5P and other e-learning clips, app or game lines. Up to 50 texts of up to 1,000 characters each, all in one voice. Returns a link per clip and one ZIP with every clip, numbered in order (01-..., 02-...). Use it instead of calling text_to_speech many times. Needs a connected FreeTTS PRO account.",
+    description: "Make one audio file per text from a list, in one call: vocabulary and flashcards, quiz questions and answers, H5P and other e-learning clips, app or game lines, each line of a dialogue as its own file. Up to 50 texts of up to 1,000 characters each, in one voice or with a voice for each text (voices). Returns a link per clip and one ZIP with every clip, numbered in order (01-..., 02-...). Use it instead of calling text_to_speech many times. Needs a connected FreeTTS PRO account.",
     inputSchema: {
       texts: z.array(z.string().min(1).max(1000)).min(1).max(50).describe("The texts, one clip each, in the order wanted."),
       voice: z.string().optional().describe("A FreeTTS voice id from list_voices for every clip, like es-ES-ElviraNeural (a short name like 'Elvira' also works). If empty, a good voice for the language is chosen."),
+      voices: z.array(z.string().max(120)).max(50).optional().describe("A voice for each text, in the same order as texts, when the clips are spoken by different people: [\"de-DE-KatjaNeural\", \"de-DE-ConradNeural\", \"de-DE-KatjaNeural\"]. One entry per text; an empty entry uses voice."),
       language: z.string().optional().describe("Language of the texts when no voice is given, like 'Spanish' or 'fr-FR'."),
       speed: z.number().int().min(-30).max(30).optional().describe("Percent slower (negative) or faster (positive). Default 0."),
       format: z.enum(["mp3", "wav"]).optional().describe("mp3 (default) or wav."),
     },
     outputSchema: BATCH_OUTPUT,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(inChatGPT(caller)
@@ -410,21 +421,35 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const empty = texts.findIndex((t) => !t);
     if (empty >= 0) return fail(`Text ${empty + 1} is empty. Give the words for every clip.`);
     const all = await voices();
+    // A voice per clip (1.3.1): lines spoken by different people in one call. Each
+    // entry is resolved like `voice`; an empty entry falls back to it.
+    const own = (a.voices || []).map((s) => (s || "").trim());
+    if (a.voices && own.length !== texts.length) return fail(`voices has ${own.length} ${own.length === 1 ? "entry" : "entries"} for ${texts.length} ${texts.length === 1 ? "text" : "texts"}. Give one voice per text, in the same order, or leave voices out to use one voice for every clip.`);
+    const perClip: string[] = [];
+    for (let i = 0; i < own.length; i++) {
+      if (!own[i]) { perClip.push(""); continue; }
+      const pv = findVoice(all, own[i], a.language);
+      if (!pv) return fail(`Voice ${i + 1} in voices, "${own[i]}", is not a FreeTTS voice id. Use list_voices to find one (ids look like en-US-JennyNeural or de-DE-Florian:DragonHDLatestNeural).`);
+      if (["ultra", "prime"].includes(pv.Tier || "")) return fail(`${pv.ShortName} is ${pv.Tier === "prime" ? "a Prime" : "an Ultra"} voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
+      perClip.push(pv.ShortName);
+    }
     let voice = (a.voice || "").trim();
     let v = voice ? findVoice(all, voice, a.language) : undefined;
     if (voice && !v) return fail(`"${voice}" is not a FreeTTS voice id. Use list_voices to find one (ids look like en-US-JennyNeural or de-DE-Florian:DragonHDLatestNeural).`);
     if (v && ["ultra", "prime"].includes(v.Tier || "")) return fail(`${v.ShortName} is ${v.Tier === "prime" ? "a Prime" : "an Ultra"} voice, available on freetts.org only, not through the API. Pick another voice from list_voices.`);
-    if (!v) {
+    // The voice for clips without their own, looked up only when one needs it.
+    if (!v && (!own.length || perClip.some((x) => !x))) {
       const d = await pickDefaultVoice(a.language, false);
       if (!d) return fail(`No FreeTTS voice for "${a.language}". list_voices with no language shows what exists.`);
       v = d;
     }
-    voice = v.ShortName;
+    voice = v ? v.ShortName : perClip[0];
+    const voiceFor = (i: number) => perClip[i] || voice;
     const fmt = a.format || "mp3";
     const rate = a.speed ? `${a.speed > 0 ? "+" : ""}${a.speed}%` : undefined;
     // Five renders at a time, in order. Each is an ordinary API call: counted on
     // the account, and a repeat of the same text and voice comes back free.
-    const done: { index: number; text: string; fileId: string; url: string }[] = [];
+    const done: { index: number; text: string; fileId: string; url: string; voice: string }[] = [];
     const failed: { index: number; text: string; reason: string }[] = [];
     let stop: string | null = null;
     let next = 0;
@@ -433,8 +458,8 @@ export function registerTools(server: McpServer, caller: Caller): void {
         const i = next++;
         if (stop) { failed.push({ index: i + 1, text: texts[i].slice(0, 80), reason: stop }); continue; }
         try {
-          const r = await tts(caller.apiKey!, { text: texts[i], voice, output_format: fmt, ...(rate ? { rate } : {}) });
-          done.push({ index: i + 1, text: texts[i], fileId: r.file_id, url: r.audio_url || audioUrl(r.file_id) });
+          const r = await tts(caller.apiKey!, { text: texts[i], voice: voiceFor(i), output_format: fmt, ...(rate ? { rate } : {}) });
+          done.push({ index: i + 1, text: texts[i], fileId: r.file_id, url: r.audio_url || audioUrl(r.file_id), voice: voiceFor(i) });
         } catch (e) {
           const reason = apiErrorText(e, caller);
           // A refused key, a plan wall or the rate limit would refuse the rest the same way.
@@ -463,13 +488,17 @@ export function registerTools(server: McpServer, caller: Caller): void {
     const chars = done.reduce((n, d) => n + d.text.length, 0);
     const mime = fmt === "wav" ? "audio/wav" : "audio/mpeg";
     const zipName = `freetts-${done.length}-clips-${clipSlug(done[0].text).slice(0, 24) || "audio"}.zip`;
+    const usedVoices = [...new Set(done.map((d) => d.voice))];
+    const voiceOf = new Map(done.map((d) => [d.index, d.voice]));
+    // A call without a voices list gets the result shape it always had.
     const clips = done.map((d) => ({ index: d.index, text: d.text.slice(0, 200), url: d.url,
-      file: { file_id: d.fileId, download_url: d.url, mime_type: mime, file_name: clipName(d) } }));
+      file: { file_id: d.fileId, download_url: d.url, mime_type: mime, file_name: clipName(d) },
+      ...(own.length ? { voice: d.voice } : {}) }));
     const lines = [
-      `Made ${done.length} of ${texts.length} clips with ${voice}${failed.length ? `; ${failed.length} could not be made (listed below)` : ""}. ${chars.toLocaleString()} characters, ${fmt.toUpperCase()}.`,
+      `Made ${done.length} of ${texts.length} clips ${usedVoices.length > 1 ? `in ${usedVoices.length} voices (${usedVoices.join(", ")})` : `with ${usedVoices[0] || voice}`}${failed.length ? `; ${failed.length} could not be made (listed below)` : ""}. ${chars.toLocaleString()} characters, ${fmt.toUpperCase()}.`,
       zipUrl ? `All clips in one ZIP, numbered in order: ${zipUrl} (the ZIP is kept one day).` : "The ZIP could not be made just now; each clip has its own link below.",
       "Each clip (kept 30 days):",
-      ...clips.map((c) => `${num(c.index)}. ${c.url}  "${c.text.slice(0, 60)}${c.text.length > 60 ? "..." : ""}"`),
+      ...clips.map((c) => `${num(c.index)}. ${c.url}  "${c.text.slice(0, 60)}${c.text.length > 60 ? "..." : ""}"${usedVoices.length > 1 ? `  (${voiceOf.get(c.index)})` : ""}`),
       ...failed.map((f) => `${num(f.index)}. not made: ${f.reason}`),
     ];
     const content: CallToolResult["content"] = [{ type: "text", text: lines.join("\n") }];
@@ -516,7 +545,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       language: z.string().optional().describe("Language of the lines when no voices are given."),
     },
     outputSchema: DIALOGUE_OUTPUT,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Dialogue with several voices is part of FreeTTS PRO. The free plan can make single-voice audio with text_to_speech. Plans: ${PRICING}`);
@@ -582,7 +611,7 @@ export function registerTools(server: McpServer, caller: Caller): void {
       track_end: z.enum(["none", "beep", "end"]).optional().describe("After the last line of each track: nothing, a long beep, or the word End. Default none."),
       my_part: z.string().optional().describe("In a scene, the character you play: their lines become timed gaps for you to say them."),
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Script mode recording is part of FreeTTS PRO. The free plan can paste a script and see its timing on freetts.org/studio?mode=script; recording needs PRO: ${PRICING}`);
