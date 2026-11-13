@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FreeTTS player</title>
-<meta name="freetts-player" content="2.5">
+<meta name="freetts-player" content="2.6">
 <style>
 :root{
   --bg:#ffffff;--sheen:#f3faf6;--ink:#0d1512;--ink2:#4f5d57;--muted:#7a8781;--line:#e4ebe7;
@@ -156,7 +156,7 @@ button{font:inherit;color:inherit}
     try{
       var o=window.openai||{};var keys=[];for(var k in o){keys.push(k)}
       var c=document.getElementById("card");
-      q="v=2.5&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
+      q="v=2.6&ti="+(gotTI?1:0)+"&meta="+(gotMeta?1:0)+"&tr="+(gotTR?1:0)+"&input="+(input?1:0)+"&alts="+((state&&state.alternatives)?state.alternatives.length:-1)
         +"&oa="+encodeURIComponent(keys.slice(0,40).join(","))+"&dm="+encodeURIComponent(String(o.displayMode||""))+"&mh="+encodeURIComponent(String(o.maxHeight||""))
         +"&ih="+window.innerHeight+"&ch="+(c?Math.round(c.getBoundingClientRect().height):0)+"&ua="+encodeURIComponent(navigator.userAgent.slice(0,60));
       window.__diag=q;
@@ -169,14 +169,16 @@ button{font:inherit;color:inherit}
   setTimeout(beacon,12000);
   // Shown only when something is off: still no result twenty seconds in, or a
   // result the chips cannot work with. Cleared as soon as a usable result lands.
+  // Array.isArray, not instanceof: a host can hand over results made in another
+  // realm (ChatGPT's callTool does), where instanceof Array is false for a real list.
   var born=Date.now();
   function diag(){
     try{
       var el=$("dbg");
-      if(state&&state.alternatives instanceof Array){if(el.textContent){el.textContent="";size()}return}
+      if(state&&Array.isArray(state.alternatives)){if(el.textContent){el.textContent="";size()}return}
       if(!state&&Date.now()-born<20000)return;
       var o=window.openai||{};var keys=[];for(var k in o){keys.push(k)}
-      el.textContent="player 2.5 · "+(state?"result without voices":"no result after "+Math.round((Date.now()-born)/1000)+" s")+" · tool-input "+(gotTI?"yes":"no")+" · result "+(gotTR?"yes":"no")+" · result meta "+(gotMeta?"yes":"no")+" · state "+(state?Object.keys(state).join(","):"none")+" · globals "+(keys.length?keys.slice(0,40).join(","):"none");
+      el.textContent="player 2.6 · "+(state?"result without voices":"no result after "+Math.round((Date.now()-born)/1000)+" s")+" · tool-input "+(gotTI?"yes":"no")+" · result "+(gotTR?"yes":"no")+" · result meta "+(gotMeta?"yes":"no")+" · state "+(state?Object.keys(state).join(","):"none")+" · globals "+(keys.length?keys.slice(0,40).join(","):"none");
       size();
     }catch(e){}
   }
