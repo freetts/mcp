@@ -97,8 +97,11 @@ function apiErrorText(e: unknown, caller: Caller): string {
     // FastAPI's own validation errors arrive as a list of {loc, msg}.
     const list = Array.isArray(e.detail) ? (e.detail as Array<{ loc?: unknown[]; msg?: string }>).map((x) => `${(x.loc || []).slice(-1)[0] ?? "input"}: ${x.msg}`).join("; ") : "";
     const msg = list ? `FreeTTS did not accept the request (${list}).` : typeof d === "string" ? d : d?.error || e.message;
-    const lt = typeof d === "object" && d ? d.limit_type || "" : "";
-    if (e.status === 429) return `FreeTTS is rate limiting this ${caller.kind === "anon" ? "connection" : "key"} (too many requests in a minute). Wait a moment and try again.`;
+    // /api/v1/tts answers a used-up month with 429 as well (a plain sentence for keys): that is a plan
+    // limit, not "too many requests in a minute", so it takes the plan wording below.
+    const lt = (typeof d === "object" && d ? d.limit_type || "" : "")
+      || (e.status === 429 && /monthly character limit/i.test(String(msg)) ? "monthly" : "");
+    if (e.status === 429 && !PLAN_LIMITS.has(lt)) return `FreeTTS is rate limiting this ${caller.kind === "anon" ? "connection" : "key"} (too many requests in a minute). Wait a moment and try again.`;
     // Callers without a key share the service account: its caps are the free pool, not theirs.
     if (caller.kind === "anon" && (e.status === 402 || PLAN_LIMITS.has(lt))) return `The free allowance for callers without an account is used up for now. A free FreeTTS key keeps working: ${keysHelp(caller)}`;
     if (lt === "hd_voice_required") return `HD and Signature voices are part of FreeTTS PRO. list_voices with free_only: true shows the voices this key can use. Plans: ${PRICING}`;
