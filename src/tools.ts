@@ -690,8 +690,9 @@ export function registerTools(server: McpServer, caller: Caller): void {
       subtitles: z.enum(["srt", "vtt"]).optional().describe("Also make a subtitle file in this format and return its link."),
     },
     outputSchema: STT_OUTPUT,
-    // Reads an outside address (open world); makes nothing the caller has to undo.
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
+    // Not read-only (OpenAI's plugin scan, 2026-11-20): it uses the account's transcription minutes and can
+    // save subtitle and transcript files. Nothing to undo, so not destructive; it reads an outside address.
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: true },
     _meta: {
       "openai/fileParams": ["audio_file"],
       "openai/toolInvocation/invoking": "Transcribing the recording",
