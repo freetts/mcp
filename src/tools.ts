@@ -6,12 +6,17 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { CONFIG } from "./config.js";
 import { voices, isFreeVoice, tierLabel, tts, usage, multivoice, merge, transcribe, download, audioUrl, ApiError, byLanguage, findVoice, type Voice } from "./freetts.js";
 import { safeFetch, FetchRefused, audioFileName } from "./safefetch.js";
-import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform, rememberInput, recallInput, storeZip, publicZipUrl } from "./audio.js";
+import { watermarkAndStore, publicAudioUrl, storedPath, durationSeconds, requestHash, waveform, rememberInput, recallInput, storeZip, publicZipUrl, storeText, publicTextUrl } from "./audio.js";
 import { PLAYER_TOOL_META, pickAlternatives, voiceShortName } from "./player.js";
 import { store, today } from "./store.js";
 import { recordScript, steadyVoiceId } from "./script/record.js";
 import { DEFAULT_SETTINGS } from "./script/scriptModel.js";
-import { readFile } from "node:fs/promises";
+import { readFile, stat, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { cues, toSrt, toVtt, timestamped, bySpeakerText, type Seg, type Word } from "./transcript.js";
+import { startJob, waitFor, handOut, forget, findJob, ownerOf, running, expectedSeconds, WAIT_MS, PER_OWNER, PER_SERVER, JOB_KEEP_MS, type Job } from "./jobs.js";
 
 export interface Caller {
   kind: "anon" | "key";
@@ -64,6 +69,27 @@ const BATCH_OUTPUT = {
   format: z.string(),
   characters: z.number(),
 };
+// A file the user attached in ChatGPT, passed to a tool that lists the field in "openai/fileParams".
+// OpenAI's plugin check requires all four properties declared and download_url + file_id required.
+const CHATGPT_FILE = z.object({
+  download_url: z.string().describe("Temporary download address of the file."),
+  file_id: z.string().describe("The file's id in ChatGPT."),
+  mime_type: z.string().optional().describe("Type of the file, like audio/mpeg."),
+  file_name: z.string().optional().describe("Name of the file."),
+}).strict();
+const STT_OUTPUT = {
+  status: z.enum(["done", "working"]).optional().describe("working: a long recording is still being transcribed; collect it with get_transcript."),
+  job_id: z.string().optional().describe("Pass to get_transcript while status is working."),
+  text: z.string().optional().describe("The transcript (with times or speakers when asked). For a very long one, the first part."),
+  language: z.string().nullable().optional(),
+  duration_seconds: z.number().optional().describe("Length of the recording."),
+  speakers_found: z.number().optional(),
+  complete: z.boolean().optional().describe("false when text holds only the first part; the whole text is at transcript_url."),
+  transcript_url: z.string().optional().describe("The whole transcript as a text file, kept one day."),
+  subtitles: z.object({ format: z.enum(["srt", "vtt"]), url: z.string(), cues: z.number(), file: FILE_REF }).optional().describe("The subtitle file, kept one day."),
+  audio_seconds: z.number().nullable().optional(),
+  expected_seconds: z.number().nullable().optional().describe("About how long until the transcript is ready."),
+};
 /** Renders a batch runs at the same time. */
 const BATCH_PARALLEL = 5;
 /** A file name from the first words: "Hallo! Ich heiße Mia." -> hallo-ich-heisse-mia-7486e6ed.mp3 (the id keeps names apart). */
@@ -77,7 +103,7 @@ export function clipSlug(words: string): string {
 }
 
 /** Tools that need an account. Calls without a token get a 401 before the SDK runs (see index.ts). */
-export const PROTECTED_TOOLS = new Set(["batch_text_to_speech", "dialogue_to_speech", "script_to_tracks", "transcribe_audio"]);
+export const PROTECTED_TOOLS = new Set(["batch_text_to_speech", "dialogue_to_speech", "script_to_tracks", "transcribe_audio", "get_transcript"]);
 
 const text = (t: string): CallToolResult => ({ content: [{ type: "text", text: t }] });
 const fail = (t: string): CallToolResult => ({ content: [{ type: "text", text: t }], isError: true });
@@ -643,29 +669,197 @@ export function registerTools(server: McpServer, caller: Caller): void {
     } catch (e) { return fail(apiErrorText(e, caller)); }
   });
 
-  // ── transcribe_audio (account) ────────────────────────────────────────
+  // ── transcribe_audio + get_transcript (account, PRO) ─────────────────
+  // 1.4.0: a file attached in ChatGPT (openai/fileParams) or a link, or a file on disk in local mode;
+  // optional speaker labels, timestamps and SRT/WebVTT subtitles; recordings up to the plan's length
+  // (PRO 4 hours), with long ones collected by get_transcript. A call without the new options answers
+  // exactly as 1.3.3 did ({ text, language }).
+  const sttOpts = (a: { speakers?: boolean; timestamps?: boolean; subtitles?: "srt" | "vtt" }): SttOpts =>
+    ({ speakers: !!a.speakers, timestamps: !!a.timestamps, subtitles: a.subtitles });
+
   server.registerTool("transcribe_audio", {
     title: "Transcribe audio (speech to text)",
-    description: "Turn a recording into text with FreeTTS speech to text. Give a public https URL to an audio file (mp3, wav, m4a, ogg, webm). Needs a connected FreeTTS PRO account.",
+    description: `Turn a recording into text with FreeTTS speech to text (PRO). Give the audio as ${CONFIG.local ? "a file path on this computer (file_path), or " : ""}a file the user attached (audio_file) or a public https link to the file (audio_url): mp3, wav, m4a, ogg, flac, aac, webm, or a video file. Up to ${CONFIG.local ? "95" : "200"} MB and the plan's length per recording (PRO: 4 hours). Optional: speakers (label who speaks), timestamps (a time on every line), subtitles ('srt' or 'vtt' file). A long recording may answer with a job_id instead of the text: then call get_transcript with it.`,
     inputSchema: {
-      audio_url: z.string().url().describe("Public https URL of the audio file."),
-      language: z.string().optional().describe("Language of the recording, like 'en-US', 'de-DE', 'Arabic' or 'es', or 'auto' to detect it (default)."),
+      audio_file: CHATGPT_FILE.optional().describe("A file the user attached in the chat."),
+      audio_url: z.string().url().optional().describe("Public https URL of the audio file."),
+      ...(CONFIG.local ? { file_path: z.string().optional().describe("Path of an audio or video file on this computer.") } : {}),
+      language: z.string().optional().describe("Language of the recording, like 'en-US', 'de-DE', 'Arabic' or 'es', or 'auto' to detect it (default). Naming it is more accurate."),
+      speakers: z.boolean().optional().describe("Label who is speaking (Speaker 1, Speaker 2, up to 6). Default false."),
+      timestamps: z.boolean().optional().describe("Start each line with its time, like [01:15]. Default false."),
+      subtitles: z.enum(["srt", "vtt"]).optional().describe("Also make a subtitle file in this format and return its link."),
     },
+    outputSchema: STT_OUTPUT,
+    // Reads an outside address (open world); makes nothing the caller has to undo.
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true, idempotentHint: true },
+    _meta: {
+      "openai/fileParams": ["audio_file"],
+      "openai/toolInvocation/invoking": "Transcribing the recording",
+      "openai/toolInvocation/invoked": "Transcript ready",
+    },
   }, async (a) => {
     if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
     if (caller.plan === "free") return fail(`Speech to text is part of FreeTTS PRO. Plans: ${PRICING}`);
-    try {
-      const { buf, mime, url } = await safeFetch(a.audio_url, 60_000_000);
-      if (mime && !/^(audio|video)\//.test(mime) && mime !== "application/octet-stream") return fail(`That address is ${mime.includes("html") ? "a web page" : `a file of type ${mime}`}, not audio. Give the direct link to the audio file (mp3, wav, m4a, ogg, webm).`);
-      const type = /^(audio|video)\//.test(mime) ? mime : "audio/mpeg";
-      // The transcriber takes a full locale (en-US); 'en', 'German' or 'Arabic (Egypt)' become one, anything unknown is detected.
-      const asked = (a.language || "auto").trim();
-      const locale = /^auto$/i.test(asked) ? "auto" : /^[a-z]{2,3}-[a-z]{2,4}$/i.test(asked) ? asked.replace(/^([a-z]+)-([a-z]+)$/i, (_m, l: string, r: string) => `${l.toLowerCase()}-${r.length === 2 ? r.toUpperCase() : r}`) : (await pickDefaultVoice(asked, false))?.Locale || "auto";
-      const res = await transcribe(caller.apiKey!, buf, audioFileName(url, type), type, locale);
-      const out = (res.text || res.transcript || (Array.isArray(res.segments) ? (res.segments as Array<{ text?: string }>).map((s) => s.text || "").join(" ") : "")) as string;
-      if (!out) return fail("FreeTTS returned no text for this file.");
-      return { content: [{ type: "text", text: out }], structuredContent: { text: out, language: res.language ?? null } };
-    } catch (e) { return fail(apiErrorText(e, caller)); }
+    const filePath = CONFIG.local ? (a as { file_path?: string }).file_path : undefined;
+    if (!a.audio_file && !a.audio_url && !filePath) return fail(`Give the recording: ${CONFIG.local ? "a file path (file_path), " : ""}a file attached in the chat (audio_file), or a public https link to it (audio_url).`);
+    const owner = ownerOf(caller.apiKey!);
+    if (running(owner) >= PER_OWNER) return fail(`${PER_OWNER} transcriptions are already running for this account. Collect one with get_transcript first, then try again.`);
+    if (running() >= PER_SERVER) return fail("FreeTTS speech to text is busy right now. Try again in a minute.");
+    const opts = sttOpts(a);
+    const key = caller.apiKey!;
+    let audioSeconds: number | null = null;
+    const job = startJob<SttJobValue>(owner, null, async () => {
+      const src = await loadRecording({ audio_file: a.audio_file, audio_url: a.audio_url, file_path: filePath });
+      audioSeconds = await probeSeconds(src.buf);
+      job.audioSeconds = audioSeconds;
+      const locale = await sttLocale(a.language);
+      const raw = await transcribe(key, src.buf, src.name, src.mime, locale, audioSeconds || 0, opts.speakers) as SttRaw;
+      return { raw, opts };
+    }, (e) => apiErrorText(e, caller));
+    const done = await waitFor(job, WAIT_MS);
+    if (!done) { handOut(job); return workingResult(job); }
+    // Answered in this call: nothing about it is kept (only files the caller asked for, a day).
+    forget(job);
+    if (!done.ok) return fail(done.error);
+    return renderTranscript(job.id, done.value, false);
   });
+
+  server.registerTool("get_transcript", {
+    title: "Get a transcript (speech to text)",
+    description: "Collect the transcript of a long recording that transcribe_audio was still working on: pass the job_id it returned. Waits up to 40 seconds; if the transcript is still not ready, it says so and you call it again.",
+    inputSchema: { job_id: z.string().max(64).describe("The job_id transcribe_audio returned.") },
+    outputSchema: STT_OUTPUT,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: { "openai/toolInvocation/invoking": "Checking the transcript", "openai/toolInvocation/invoked": "Transcript checked" },
+  }, async (a) => {
+    if (caller.kind !== "key") return fail(`This tool needs a connected FreeTTS account. ${keysHelp(caller)}`);
+    const job = await findJob(a.job_id.trim(), ownerOf(caller.apiKey!));
+    if (job === "other") return fail("That job was started with another FreeTTS account.");
+    if (!job) return fail("No transcription with that job id. Jobs are kept one day; one that was running when the server restarted has to be started again with transcribe_audio.");
+    const done = await waitFor(job, WAIT_MS);
+    if (!done) return workingResult(job);
+    if (!done.ok) return fail(done.error);
+    return renderTranscript(job.id, done.value as SttJobValue, true);
+  });
+}
+
+// ── Speech to text helpers (1.4.0) ─────────────────────────────────────
+interface SttOpts { speakers: boolean; timestamps: boolean; subtitles?: "srt" | "vtt" }
+interface SttRaw { transcript?: string; text?: string; language?: string | null; durationSec?: number; segments?: Seg[]; words?: Word[]; diarized?: boolean }
+interface SttJobValue { raw: SttRaw; opts: SttOpts }
+
+/** The largest recording: what the API accepts (200 MB), or through the public API from a computer, what Cloudflare passes. */
+const STT_MAX_BYTES = CONFIG.local ? 95_000_000 : 200_000_000;
+/** Characters of transcript returned in the answer; past it the whole text is a download. About 10,000 words, an hour of speech. */
+export const STT_INLINE_CHARS = 60_000;
+const AUDIO_EXT: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", mp4: "video/mp4", aac: "audio/aac", ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", flac: "audio/flac", webm: "audio/webm", mov: "video/quicktime", mkv: "video/x-matroska", amr: "audio/amr", wma: "audio/x-ms-wma" };
+
+/** The bytes of the recording, a name the transcriber reads the format from, and its type. */
+async function loadRecording(src: { audio_file?: { download_url: string; file_name?: string; mime_type?: string }; audio_url?: string; file_path?: string }): Promise<{ buf: Buffer; name: string; mime: string }> {
+  const isMedia = (m: string) => /^(audio|video)\//.test(m);
+  if (src.file_path) {
+    const p = src.file_path.trim().replace(/^["']|["']$/g, "");
+    const info = await stat(p).catch(() => null);
+    if (!info || !info.isFile()) throw new FetchRefused(`No file at ${p}.`);
+    if (info.size > STT_MAX_BYTES) throw new FetchRefused(`The file is over ${Math.round(STT_MAX_BYTES / 1e6)} MB. Trim it or split it, or give a link to the hosted server (https://mcp.freetts.org/mcp), which takes 200 MB.`);
+    const name = basename(p); const ext = name.split(".").pop()?.toLowerCase() || "";
+    return { buf: await readFile(p), name, mime: AUDIO_EXT[ext] || "audio/mpeg" };
+  }
+  const url = src.audio_file?.download_url || src.audio_url!;
+  const { buf, mime, url: u } = await safeFetch(url, STT_MAX_BYTES, 120_000);
+  const declared = (src.audio_file?.mime_type || "").toLowerCase();
+  const type = isMedia(declared) ? declared : isMedia(mime) ? mime : "";
+  if (!type && mime && mime !== "application/octet-stream" && !/^binary\//.test(mime)) {
+    throw new FetchRefused(`That ${src.audio_file ? "file" : "address"} is ${mime.includes("html") ? "a web page" : `a file of type ${mime}`}, not audio. Give ${src.audio_file ? "an audio or video file" : "the direct link to the audio file"} (mp3, wav, m4a, ogg, flac, webm).`);
+  }
+  const fileName = src.audio_file?.file_name?.trim();
+  const name = fileName && /\.[a-z0-9]{2,5}$/i.test(fileName) ? fileName : audioFileName(u, type || "audio/mpeg");
+  return { buf, name, mime: type || AUDIO_EXT[name.split(".").pop()?.toLowerCase() || ""] || "audio/mpeg" };
+}
+
+/** The transcriber takes a full locale (en-US); 'en', 'German' or 'Arabic (Egypt)' become one, anything unknown is detected. */
+async function sttLocale(language?: string): Promise<string> {
+  const asked = (language || "auto").trim();
+  if (/^auto$/i.test(asked) || !asked) return "auto";
+  if (/^[a-z]{2,3}-[a-z]{2,4}$/i.test(asked)) return asked.replace(/^([a-z]+)-([a-z]+)$/i, (_m, l: string, r: string) => `${l.toLowerCase()}-${r.length === 2 ? r.toUpperCase() : r}`);
+  return (await pickDefaultVoice(asked, false))?.Locale || "auto";
+}
+
+/** The answer while a long recording is still being transcribed. */
+function workingResult(job: Job<unknown>): CallToolResult {
+  const len = job.audioSeconds ? Math.round(job.audioSeconds / 60) : null;
+  const exp = expectedSeconds(job.audioSeconds);
+  const left = exp ? Math.max(5, exp - Math.round((Date.now() - job.started) / 1000)) : null;
+  const text = `Still transcribing${len ? ` this ${len}-minute recording` : " this recording"}${left ? `, about ${left} seconds to go` : ""}. Call get_transcript with job_id "${job.id}" to collect the transcript (each call waits up to ${Math.round(WAIT_MS / 1000)} seconds). It is kept for one day.`;
+  return { content: [{ type: "text", text }], structuredContent: { status: "working", job_id: job.id, audio_seconds: job.audioSeconds, expected_seconds: left } };
+}
+
+// Answers of collected jobs, so asking twice gives the same answer and files; dropped with the job after a day.
+const rendered = new Map<string, { at: number; result: CallToolResult }>();
+setInterval(() => { const cut = Date.now() - JOB_KEEP_MS; for (const [k, v] of rendered) if (v.at < cut) rendered.delete(k); }, 3600_000).unref();
+
+/** The finished transcript as the caller asked for it. Without speakers, timestamps or subtitles it is the 1.3.3 answer exactly. */
+export async function renderTranscript(jobId: string, v: SttJobValue, keep: boolean): Promise<CallToolResult> {
+  // A collected job can be asked for again (get_transcript twice): the same answer and the same files.
+  const cached = keep ? rendered.get(jobId)?.result : undefined;
+  if (cached) return cached;
+  const { raw, opts } = v;
+  const segs = Array.isArray(raw.segments) ? raw.segments : [];
+  const words = Array.isArray(raw.words) ? raw.words : [];
+  const plain = (raw.transcript || raw.text || segs.map((s) => s.text || "").join(" ")).trim();
+  if (!plain) return fail("FreeTTS found no speech in this recording.");
+  const labelled = opts.speakers && !!raw.diarized;
+  const body = opts.timestamps && segs.length ? timestamped(segs, { speakers: labelled, duration: raw.durationSec }) : labelled ? bySpeakerText(segs) : plain;
+  const extra: CallToolResult["content"] = [];
+  const structured: Record<string, unknown> = { status: "done", language: raw.language ?? null };
+  let shown = body;
+  if (body.length > STT_INLINE_CHARS) {
+    const id = await storeText("txt", body);
+    const url = publicTextUrl(id, "txt");
+    const cut = body.slice(0, STT_INLINE_CHARS);
+    const at = Math.max(cut.lastIndexOf("\n"), cut.lastIndexOf(". "));
+    const wordsTotal = plain.split(/\s+/).length;
+    shown = `${cut.slice(0, at > STT_INLINE_CHARS * 0.8 ? at + 1 : STT_INLINE_CHARS).trimEnd()}\n\n[The transcript is ${wordsTotal.toLocaleString("en-US")} words long; the first part is above. The whole transcript: ${url} (kept one day.)]`;
+    structured.transcript_url = url;
+    structured.complete = false;
+    extra.push({ type: "resource_link", uri: url, name: `freetts-transcript-${id.slice(0, 8)}.txt`, mimeType: "text/plain" });
+  }
+  if (opts.subtitles) {
+    const list = cues(words, segs, raw.language);
+    const ext = opts.subtitles;
+    const id = await storeText(ext, ext === "srt" ? toSrt(list, labelled) : toVtt(list, labelled));
+    const url = publicTextUrl(id, ext);
+    const name = `freetts-subtitles-${id.slice(0, 8)}.${ext}`;
+    structured.subtitles = { format: ext, url, cues: list.length, file: { file_id: id, download_url: url, mime_type: ext === "srt" ? "application/x-subrip" : "text/vtt", file_name: name } };
+    shown += `\n\nSubtitles (${ext.toUpperCase()}, ${list.length} cues): ${url} (kept one day)`;
+    extra.push({ type: "resource_link", uri: url, name, mimeType: ext === "srt" ? "application/x-subrip" : "text/vtt" });
+  }
+  const plainOnly = !opts.speakers && !opts.timestamps && !opts.subtitles && shown === body;
+  let result: CallToolResult;
+  if (plainOnly) result = { content: [{ type: "text", text: plain }], structuredContent: { text: plain, language: raw.language ?? null } };
+  else {
+    structured.text = shown;
+    if (raw.durationSec) structured.duration_seconds = Math.round(raw.durationSec);
+    if (opts.speakers) {
+      structured.speakers_found = new Set(segs.map((s) => s.speaker).filter((s) => s !== null && s !== undefined)).size;
+      if (!labelled) shown += "\n\n(Only one voice was heard, so no speaker labels were added.)";
+    }
+    result = { content: [{ type: "text", text: shown }, ...extra], structuredContent: structured };
+  }
+  if (keep) rendered.set(jobId, { at: Date.now(), result });
+  return result;
+}
+
+/** Length of the recording in seconds from ffprobe, or null when it cannot be read (or ffprobe is missing, as on some computers). */
+async function probeSeconds(buf: Buffer): Promise<number | null> {
+  const dir = await mkdtemp(join(tmpdir(), "ftstt-"));
+  try {
+    const f = join(dir, "in");
+    await writeFile(f, buf);
+    const probe = CONFIG.ffmpeg.replace(/ffmpeg(\.exe)?$/i, (_m, x) => `ffprobe${x || ""}`);
+    return await new Promise((res) => execFile(probe, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", f], { timeout: 20_000 }, (err, out) => {
+      const n = parseFloat(String(out));
+      res(!err && isFinite(n) && n > 0 ? n : null);
+    }));
+  } catch { return null; } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }

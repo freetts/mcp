@@ -15,14 +15,14 @@ table{border-collapse:collapse;width:100%;font-size:.95rem}th,td{border-bottom:1
 .wrap{overflow-x:auto}
 </style></head><body><main>
 <h1>Privacy notice: FreeTTS MCP server and plugin</h1>
-<p class="meta">Last updated 1 October 2026. Applies to the FreeTTS MCP server at https://mcp.freetts.org/mcp, the FreeTTS plugin for ChatGPT and Codex, and the local package @freetts/mcp. The full FreeTTS privacy policy is at <a href="https://freetts.org/privacy">freetts.org/privacy</a>.</p>
+<p class="meta">Last updated 20 November 2026. Applies to the FreeTTS MCP server at https://mcp.freetts.org/mcp, the FreeTTS plugin for ChatGPT and Codex, and the local package @freetts/mcp. The full FreeTTS privacy policy is at <a href="https://freetts.org/privacy">freetts.org/privacy</a>.</p>
 
 <h2>Who we are</h2>
 <p>FreeTTS is run by Outline Technologies LLC, 30 N Gould St, Ste R, Sheridan, WY 82801, United States. Contact: <a href="mailto:info@freetts.org">info@freetts.org</a> or <a href="https://freetts.org/contact">freetts.org/contact</a>.</p>
 
 <h2>What we collect</h2>
 <ul>
-<li><strong>The text you ask to have read aloud</strong>, and for speech to text, the audio link you give. This is the content the assistant sends when you use a FreeTTS tool. It can contain personal data if you include it.</li>
+<li><strong>The text you ask to have read aloud</strong>, and for speech to text, the recording you give (a file you attached, a link, or in local mode a file on your computer) and the transcript made from it. This is the content the assistant sends when you use a FreeTTS tool. It can contain personal data if you include it.</li>
 <li><strong>The audio files we produce</strong> from that text.</li>
 <li><strong>Technical data about each request:</strong> the IP address it came from, the name of the app or assistant that called us (for example its user agent), the tool used, the number of characters, the time, and whether it worked.</li>
 <li><strong>If you connect a FreeTTS account:</strong> the FreeTTS API key you paste on the connect page, and your plan and usage, which we read from your FreeTTS account.</li>
@@ -49,6 +49,9 @@ table{border-collapse:collapse;width:100%;font-size:.95rem}th,td{border-bottom:1
 <div class="wrap"><table>
 <tr><th>Data</th><th>Kept for</th></tr>
 <tr><td>Your text</td><td>Not stored by the MCP server. It is processed in memory to make the audio. If you connect a FreeTTS account and have turned on history saving in your FreeTTS dashboard, the FreeTTS website keeps it as that setting describes.</td></tr>
+<tr><td>Recordings you give for speech to text</td><td>Not kept. The recording is used only while it is transcribed and is deleted straight after.</td></tr>
+<tr><td>Transcripts</td><td>A short transcript is returned to you and not stored. When a recording takes longer than one request (a long recording), its transcript is kept so you can collect it, and a very long transcript is also kept as a text file to download: both are deleted after 24 hours.</td></tr>
+<tr><td>Subtitle files (SRT, WebVTT) you ask for</td><td>Deleted after 24 hours.</td></tr>
 <tr><td>Audio made without an account</td><td>Deleted after 1 hour.</td></tr>
 <tr><td>Audio made with a FreeTTS account</td><td>As your plan sets: 1 hour on a free account, 30 days on PRO.</td></tr>
 <tr><td>IP address used for the free allowance</td><td>Up to 24 hours.</td></tr>

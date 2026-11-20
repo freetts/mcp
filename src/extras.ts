@@ -75,7 +75,7 @@ function plansText(): string {
 ## FreeTTS PRO
 - HD and Signature voices, no tag, WAV as well as MP3.
 - 10,000 characters a call, 1,000,000 a month, 200 requests a minute. Files kept 30 days.
-- batch_text_to_speech (up to 50 short clips in one call, in one voice or a voice per clip, with a ZIP of all), dialogue_to_speech (a voice per speaker), script_to_tracks (Script mode timing) and transcribe_audio (speech to text).
+- batch_text_to_speech (up to 50 short clips in one call, in one voice or a voice per clip, with a ZIP of all), dialogue_to_speech (a voice per speaker), script_to_tracks (Script mode timing) and transcribe_audio (speech to text: recordings up to 4 hours and 200 MB, 20 hours a month, speaker labels, timestamps, SRT and WebVTT subtitles; long recordings are collected with get_transcript).
 
 Plans and prices: ${CONFIG.siteUrl}/pricing. API keys: ${CONFIG.siteUrl}/dashboard (API keys).
 `;

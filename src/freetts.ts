@@ -148,14 +148,16 @@ export function merge(apiKey: string, clips: Clip[], lead_in = 0): Promise<{ fil
 
 // ── Speech to text ───────────────────────────────────────────────────────
 export interface SttResult { text?: string; transcript?: string; segments?: unknown[]; language?: string; duration?: number; [k: string]: unknown }
-export async function transcribe(apiKey: string, audio: Buffer, filename: string, mime: string, language = "auto", durationSec = 0): Promise<SttResult> {
+export async function transcribe(apiKey: string, audio: Buffer, filename: string, mime: string, language = "auto", durationSec = 0, speakers = false): Promise<SttResult> {
   const form = new FormData();
   form.append("audio", new Blob([new Uint8Array(audio)], { type: mime }), filename);
   form.append("language", language);
-  form.append("diarization", "false");
-  form.append("durationSec", String(durationSec));
+  form.append("diarization", speakers ? "true" : "false");
+  // The real length lets the API refuse a recording over the plan's limit before it is converted.
+  form.append("durationSec", String(durationSec > 0 ? Math.round(durationSec * 10) / 10 : 0));
   form.append("enhance", "standard");
-  return call<SttResult>("/api/speech-to-text", { method: "POST", apiKey, body: form, timeoutMs: 300_000 });
+  // The API waits for Microsoft up to 20 minutes on the longest files (app.py, 2026-11-20); this runs as a job, so no caller waits on it.
+  return call<SttResult>("/api/speech-to-text", { method: "POST", apiKey, body: form, timeoutMs: 1_500_000 });
 }
 
 export const audioUrl = (fileId: string) => `${CONFIG.siteUrl}/api/audio/${fileId}`;

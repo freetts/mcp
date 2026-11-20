@@ -99,7 +99,23 @@ export async function durationSeconds(path: string): Promise<number | null> {
   }));
 }
 
-/** Files older than the free retention are removed once a minute. */
+// ── Transcripts and subtitles (transcribe_audio, 1.4.0) ────────────────────
+// The full text of a long transcript, and SRT or WebVTT subtitles, kept a day at
+// mcp.freetts.org/transcripts/<id>.<ext> so the person can download them.
+export const TEXT_KEEP_MS = 24 * 60 * 60 * 1000;
+const TEXT_DIR = join(CONFIG.stateDir, "transcripts");
+export const TEXT_TYPES = { txt: "text/plain; charset=utf-8", srt: "application/x-subrip; charset=utf-8", vtt: "text/vtt; charset=utf-8" } as const;
+export type TextExt = keyof typeof TEXT_TYPES;
+export async function storeText(ext: TextExt, body: string): Promise<string> {
+  const id = randomUUID();
+  await mkdir(TEXT_DIR, { recursive: true });
+  await writeFile(join(TEXT_DIR, `${id}.${ext}`), body, "utf8");
+  return id;
+}
+export const storedTextPath = (id: string, ext: string) => (/^[0-9a-f-]{36}$/.test(id) && ext in TEXT_TYPES ? join(TEXT_DIR, `${id}.${ext}`) : null);
+export const publicTextUrl = (id: string, ext: TextExt) => `${CONFIG.publicUrl}/transcripts/${id}.${ext}`;
+
+/** Files older than their retention are removed once a minute. */
 export function startAudioReaper(): void {
   startInputReaper();
   const sweep = async () => {
@@ -110,6 +126,13 @@ export function startAudioReaper(): void {
         if (s && Date.now() - s.mtimeMs > (f.endsWith(".zip") ? ZIP_KEEP_MS : CONFIG.anon.keepMs)) await unlink(p).catch(() => {});
       }
     } catch { /* next sweep */ }
+    try {
+      for (const f of await readdir(TEXT_DIR)) {
+        const p = join(TEXT_DIR, f);
+        const s = await stat(p).catch(() => null);
+        if (s && Date.now() - s.mtimeMs > TEXT_KEEP_MS) await unlink(p).catch(() => {});
+      }
+    } catch { /* folder not made yet */ }
   };
   setInterval(sweep, 60_000).unref();
   void sweep();

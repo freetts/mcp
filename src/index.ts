@@ -9,7 +9,8 @@ import { PRIVACY_HTML } from "./privacy.js";
 import { join } from "node:path";
 import { CONFIG, MCP_PATH, RESOURCE } from "./config.js";
 import { loadStore } from "./store.js";
-import { startAudioReaper, storedPath, storedZipPath } from "./audio.js";
+import { startAudioReaper, storedPath, storedZipPath, storedTextPath, TEXT_TYPES, type TextExt } from "./audio.js";
+import { startJobReaper } from "./jobs.js";
 import { mountOAuth, keyFromAccessToken, wwwAuthenticate } from "./oauth.js";
 import { PROTECTED_TOOLS, platformSpent, type Caller } from "./tools.js";
 import { createServer } from "./server.js";
@@ -19,6 +20,7 @@ import pkg from "../package.json" with { type: "json" };
 
 loadStore();
 startAudioReaper();
+startJobReaper();
 mkdirSync(join(CONFIG.stateDir, "log"), { recursive: true });
 // Request logs are kept 30 days (the privacy notice says so): older daily files are deleted.
 const pruneLogs = () => { const cut = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10); try { for (const f of readdirSync(join(CONFIG.stateDir, "log"))) if (/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f) && f.slice(0, 10) < cut) unlinkSync(join(CONFIG.stateDir, "log", f)); } catch { /* never fail on cleanup */ } };
@@ -70,6 +72,19 @@ app.get("/audio/:file", (req: Request, res: Response) => {
   res.setHeader("Cache-Control", "private, max-age=3600");
   res.setHeader("Content-Type", "audio/mpeg");
   res.sendFile(p, (err) => { if (err && !res.headersSent) res.status(404).json({ error: "This free-tier file has expired (files without a key are kept one hour)." }); });
+});
+
+// Transcripts and subtitles from transcribe_audio, one day.
+app.get("/transcripts/:file", (req: Request, res: Response) => {
+  const m = /^([0-9a-f-]{36})\.(txt|srt|vtt)$/.exec(String(req.params.file));
+  const p = m ? storedTextPath(m[1], m[2]) : null;
+  if (!m || !p) return res.status(404).end();
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("Content-Type", TEXT_TYPES[m[2] as TextExt]);
+  res.setHeader("X-Robots-Tag", "noindex");
+  // The same name the tool result gives the file.
+  res.setHeader("Content-Disposition", `attachment; filename="freetts-${m[2] === "txt" ? "transcript" : "subtitles"}-${m[1].slice(0, 8)}.${m[2]}"`);
+  res.sendFile(p, (err) => { if (err && !res.headersSent) res.status(404).json({ error: "This file has expired (transcripts and subtitles are kept one day). Transcribe the recording again to get a new one." }); });
 });
 
 const clientIp = (req: Request) => (req.headers["cf-connecting-ip"] as string || "").trim() || (req.headers["x-real-ip"] as string || "").trim() || (req.ip || "0.0.0.0").replace(/^::ffff:/, "");

@@ -19,7 +19,8 @@ Ask your assistant to read something aloud, and it calls FreeTTS and hands you a
 | `batch_text_to_speech` | Up to 50 short texts in, one clip each plus a ZIP of all, numbered in order. One voice, or a voice per clip. | FreeTTS PRO |
 | `dialogue_to_speech` | `Name: line` script, a voice per speaker, one file. | FreeTTS PRO |
 | `script_to_tracks` | Script mode: exact `(pause 2)`, `(beep)`, `(ding)`, `TRACK:` files, `CUE:` voice, scenes. | FreeTTS PRO |
-| `transcribe_audio` | A public audio URL in, text out. | FreeTTS PRO |
+| `transcribe_audio` | A recording in (a file attached in ChatGPT, a public https link, or a file path in local mode), text out. Optional speaker labels, timestamps, and SRT or WebVTT subtitles. Up to 4 hours and 200 MB a recording. | FreeTTS PRO |
+| `get_transcript` | Collects the transcript of a long recording that `transcribe_audio` answered with a `job_id`. | FreeTTS PRO |
 
 **Free without a key:** standard voices, 2,000 characters a call and a day per connection, 10 requests a minute, a short spoken "FreeTTS" tag at the end, files kept one hour.
 

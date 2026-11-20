@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "freetts",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Text to speech in 149 languages with 2,253 voices: MP3 links, voice suggestions, multi-voice dialogue, timed tracks with exact pauses, and speech to text.",
   "author": {
     "name": "Outline Technologies LLC",
@@ -26,7 +26,7 @@
       "interface": {
         "displayName": "FreeTTS",
         "shortDescription": "Text to speech, 149 languages",
-        "longDescription": "Turn any text into natural speech and play it right in the chat: a player with the waveform, playback speed, download, and other voices to compare the same text.\n\nChoose from 2,253 voices in 149 languages and regional accents, or ask FreeTTS to suggest three voices for your language and purpose, from audiobooks and lessons to ads and podcasts.\n\nRecord a dialogue with a different voice for each speaker, build timed tracks with exact pauses, beeps and dings for presenters, actors, teachers and video voiceovers, and turn an audio link into text.\n\nSome features, such as HD voices, dialogue, timed tracks and transcription, work once you connect your FreeTTS account.",
+        "longDescription": "Turn any text into natural speech and play it right in the chat: a player with the waveform, playback speed, download, and other voices to compare the same text.\n\nChoose from 2,253 voices in 149 languages and regional accents, or ask FreeTTS to suggest three voices for your language and purpose, from audiobooks and lessons to ads and podcasts.\n\nRecord a dialogue with a different voice for each speaker, build timed tracks with exact pauses, beeps and dings for presenters, actors, teachers and video voiceovers, and turn a recording you attach into text, with speaker labels, timestamps and SRT or WebVTT subtitles, for recordings up to 4 hours.\n\nSome features, such as HD voices, dialogue, timed tracks and transcription, work once you connect your FreeTTS account.",
         "developerName": "Outline Technologies LLC",
         "category": "Creativity",
         "capabilities": [
